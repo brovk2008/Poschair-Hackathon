@@ -27,6 +27,10 @@ export const metadata: Metadata = {
   title: 'POSCHAIR — Retro ROM Neo-Brutalist AI Posture Engine',
   description: 'Extreme Neo-Brutalist 16-Bit Bento Posture AI with Gemini 3.8 Flash & ElevenLabs voice coach.',
   keywords: ['posture', 'AI', 'health', 'webcam', 'voice coaching', 'neo-brutalist', 'retro arcade'],
+  icons: {
+    icon: '/logo.png',
+    apple: '/logo.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

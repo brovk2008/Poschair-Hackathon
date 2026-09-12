@@ -523,9 +523,9 @@ export default function PosChair() {
             <div className="modal-badge">
               <Sparkles size={14} /> 16-BIT RETRO ROM x BENTO DASHBOARD
             </div>
-            <h1 className="modal-title">
-              POS<span>CHAIR</span> AI
-            </h1>
+            <div className="splash-logo-wrap">
+              <img src="/logo.png" alt="PosChair Logo" className="splash-hero-logo" />
+            </div>
             <p className="modal-sub">
               Extreme Neo-Brutalist posture monitor with dual-layer 252-angle consensus, Gemini 3.8 Flash analysis, and ElevenLabs real-time voice coaching.
             </p>
@@ -582,9 +582,9 @@ export default function PosChair() {
             <div className="modal-badge" style={{ background: 'var(--pop-cyan)' }}>
               <Zap size={14} /> LOADING VISION ENGINE
             </div>
-            <h2 className="modal-title" style={{ fontSize: 28 }}>
-              INITIALIZING <span>ROM</span>
-            </h2>
+            <div className="splash-logo-wrap" style={{ margin: '8px 0' }}>
+              <img src="/logo.png" alt="PosChair Logo" style={{ height: 42, width: 'auto', objectFit: 'contain' }} />
+            </div>
             <p className="modal-sub">{loadingMsg}</p>
             <div className="calib-progress-track">
               <div className="calib-progress-bar" style={{ width: '85%' }} />
@@ -599,19 +599,18 @@ export default function PosChair() {
       {/* ── RETRO CARTRIDGE HEADER BAR ── */}
       <header className="cartridge-header">
         <div className="brand-section">
-          <div className="brand-logo-badge">
-            <Gamepad2 size={20} />
-            <span>POSCHAIR</span>
+          <div className="brand-logo-badge brand-img-badge">
+            <img src="/logo.png" alt="PosChair Logo" className="header-logo-img" />
           </div>
           <div className="brand-meta">
             <div className="brand-title-wrap">
               <div className="brand-title">
                 NEO<span>BRUTALIST</span>
               </div>
-              <span className="rom-chip">ROM: V3.0 HYBRID</span>
+              <span className="rom-chip">ROM: V4.0 OMNI</span>
             </div>
             <div className="brand-subtitle">
-              MEDIAPIPE BLAZEPOSE FULL // YOLOV8M-POSE ENGINE
+              OMNIDIRECTIONAL T-FRAME // YOLOV8M-POSE ENGINE
             </div>
           </div>
         </div>
@@ -708,7 +707,7 @@ export default function PosChair() {
             <div className="hud-corner br" />
 
             <div className="camera-hud-badge">
-              <Crosshair size={14} />
+              <img src="/logo.png" alt="PosChair" className="mini-hud-logo" style={{ marginRight: 6 }} />
               <span>BLAZEPOSE FULL // 33 KP</span>
             </div>
 

@@ -144,6 +144,53 @@ body::before {
   letter-spacing: 1px;
 }
 
+.brand-img-badge {
+  background: #000000;
+  padding: 4px 12px;
+  border: 3px solid var(--pop-yellow);
+  box-shadow: 4px 4px 0px var(--pop-yellow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+}
+
+.header-logo-img {
+  height: 32px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 255, 102, 0.3));
+}
+
+.splash-logo-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  margin: 10px 0;
+}
+
+.splash-hero-logo {
+  max-width: 440px;
+  width: 90%;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 18px rgba(0, 240, 255, 0.25)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.8));
+  animation: logo-glow-float 4s ease-in-out infinite;
+}
+
+@keyframes logo-glow-float {
+  0%, 100% { transform: translateY(0px) scale(1); filter: drop-shadow(0 8px 18px rgba(0, 240, 255, 0.25)); }
+  50% { transform: translateY(-4px) scale(1.02); filter: drop-shadow(0 12px 26px rgba(0, 255, 102, 0.35)); }
+}
+
+.mini-hud-logo {
+  height: 18px;
+  width: auto;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
 .brand-meta {
   display: flex;
   flex-direction: column;
