@@ -448,8 +448,12 @@ For users who want the absolute maximum accuracy (e.g. overcoming low light, bag
 - **Vercel-Compatible**: Even when PosChair is deployed on Vercel, it connects back to your local laptop through the tunnel URL specified in HEAVY_MODEL_URL.
 - **Zero Cloud GPU Costs**: You get server-grade deep learning without paying for GPU servers!
 
-### How to Run:
-`powershell
+### 1-Click Windows Launchers:
+- **`run.bat`**: Double-click to launch the **full local stack** (starts the heavy pose engine on port 8000, starts the Next.js web app on port 3000, and opens your browser automatically).
+- **`run_heavy_vercel.bat`**: Double-click to launch the **Heavy Model + Cloudflare Tunnel** to connect your laptop GPU to your live **Vercel deployment**.
+
+### Or via Terminal:
+```powershell
 # 1. Start Python Heavy Model Server (port 8000)
 npm run server:heavy
 
@@ -458,7 +462,7 @@ npm run tunnel
 
 # 3. Add the generated https://*.trycloudflare.com URL to .env.local or Vercel:
 # HEAVY_MODEL_URL=https://<tunnel-id>.trycloudflare.com
-`
+```
 
 ---
 
@@ -505,7 +509,9 @@ poschair/
 ├── .gitignore
 ├── next.config.js
 ├── package.json
-└── tsconfig.json
+├── tsconfig.json
+├── run.bat                     # 1-click full stack launcher (Next.js + heavy model)
+└── run_heavy_vercel.bat        # 1-click launcher for Heavy Model + Cloudflare Tunnel
 ```
 
 ---

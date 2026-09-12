@@ -69,39 +69,48 @@ export default function PosChair() {
   const [calibration, setCalibration] = useState<CalibrationBaseline | null>(null);
   const [fps, setFps] = useState(0);
   const [noPerson, setNoPerson] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [loadingMsg, setLoadingMsg] = useState('Downloading MediaPipe BlazePose vision model...');
 
   const appStateRef = useRef<AppState>('SPLASH');
   appStateRef.current = appState;
 
+  // ── Sync Video Stream Whenever Mounted ─────────────────────────────────────
+  useEffect(() => {
+    if (streamRef.current && videoRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(err => console.warn('Video sync play warning:', err));
+    }
+  });
+
   // ── Load MediaPipe ─────────────────────────────────────────────────────────
   const loadMediaPipe = useCallback(async () => {
     setState('LOADING');
+    setLoadingMsg('Downloading BlazePose Full vision model...');
     try {
       const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
       const filesetResolver = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
       );
-      const landmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numPoses: 1,
-        minPoseDetectionConfidence: 0.5,
-        minPosePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-        outputSegmentationMasks: false,
-      });
-      landmarkerRef.current = landmarker;
-      setState('CALIBRATING');
-    } catch {
-      // CPU fallback
       try {
-        const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
-        const filesetResolver = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-        );
+        const landmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
+            delegate: 'GPU',
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+          outputSegmentationMasks: false,
+        });
+        landmarkerRef.current = landmarker;
+        setState('CALIBRATING');
+      } catch (gpuErr) {
+        console.warn('GPU delegate failed, switching to CPU Lite model...', gpuErr);
+        setLoadingMsg('GPU busy/unsupported. Loading CPU vision model...');
         const landmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
@@ -112,29 +121,67 @@ export default function PosChair() {
           minPoseDetectionConfidence: 0.5,
           minPosePresenceConfidence: 0.5,
           minTrackingConfidence: 0.5,
+          outputSegmentationMasks: false,
         });
         landmarkerRef.current = landmarker;
         setState('CALIBRATING');
-      } catch (e) {
-        console.error('MediaPipe failed to load:', e);
       }
+    } catch (e: any) {
+      console.error('MediaPipe failed to load:', e);
+      setCameraError('AI Engine failed to load: ' + (e?.message || String(e)));
+      setState('SPLASH');
     }
   }, []);
 
   const startCamera = useCallback(async () => {
+    setCameraError(null);
+    setState('LOADING');
+    setLoadingMsg('Requesting webcam access...');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, facingMode: 'user' },
-        audio: false,
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user',
+          },
+          audio: false,
+        });
+      } catch (constraintErr) {
+        console.warn('Constrained camera request failed, falling back to default:', constraintErr);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
       streamRef.current = stream;
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        videoRef.current.muted = true;
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('Initial video.play() warning:', playErr);
+        }
       }
+
       await loadMediaPipe();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Camera error:', e);
+      let msg = 'Could not access webcam. ';
+      if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError') {
+        msg = 'Camera permission was denied. Please click the camera icon in your browser address bar, select Allow, and try again.';
+      } else if (e?.name === 'NotFoundError' || e?.name === 'DevicesNotFoundError') {
+        msg = 'No camera device was found on your computer.';
+      } else if (e?.name === 'NotReadableError' || e?.name === 'TrackStartError') {
+        msg = 'Webcam is in use by another program (Zoom, Teams, etc.). Please close it and try again.';
+      } else {
+        msg += e?.message || String(e);
+      }
+      setCameraError(msg);
+      setState('SPLASH');
     }
   }, [loadMediaPipe]);
 
@@ -251,8 +298,20 @@ export default function PosChair() {
     let frameCount = 0;
     let fpsTimer   = 0;
 
+    let lastTs = -1;
     const loop = (ts: number) => {
-      if (video.readyState < 2) { rafRef.current = requestAnimationFrame(loop); return; }
+      if (video.readyState < 2) {
+        if (video.paused && video.srcObject) {
+          video.play().catch(() => {});
+        }
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
+      if (ts <= lastTs) {
+        ts = lastTs + 1;
+      }
+      lastTs = ts;
 
       // FPS
       frameCount++;
@@ -263,10 +322,10 @@ export default function PosChair() {
       const lms: PoseLandmark[] = results.landmarks?.[0] ?? [];
 
       // Resize canvases
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-      minimap.width  = minimap.offsetWidth;
-      minimap.height = minimap.offsetHeight;
+      canvas.width  = canvas.offsetWidth || video.videoWidth || 640;
+      canvas.height = canvas.offsetHeight || video.videoHeight || 480;
+      minimap.width  = minimap.offsetWidth || 300;
+      minimap.height = minimap.offsetHeight || 140;
       const [W, H, mW, mH] = [canvas.width, canvas.height, minimap.width, minimap.height];
 
       ctx.clearRect(0, 0, W, H);
@@ -430,9 +489,9 @@ export default function PosChair() {
     <div className="dashboard">
       <audio ref={audioRef} style={{ display: 'none' }} />
 
-      {/* ── SPLASH ── */}
+      {/* ── SPLASH OVERLAY ── */}
       {appState === 'SPLASH' && (
-        <div className="splash-screen">
+        <div className="splash-screen" style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--bg-void)' }}>
           <div className="ascii-logo">{`
  ██████╗  ██████╗ ███████╗ ██████╗██╗  ██╗ █████╗ ██╗██████╗ 
  ██╔══██╗██╔═══██╗██╔════╝██╔════╝██║  ██║██╔══██╗██║██╔══██╗
@@ -445,6 +504,22 @@ export default function PosChair() {
           <div className="splash-subtitle">
             MediaPipe BlazePose → Gemini 3.8 Flash → ElevenLabs Voice
           </div>
+          {cameraError && (
+            <div style={{
+              background: 'rgba(255, 0, 64, 0.15)',
+              border: '2px solid var(--red-alert)',
+              color: 'var(--red-alert)',
+              padding: '12px 20px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '18px',
+              maxWidth: '560px',
+              textAlign: 'center',
+              boxShadow: 'var(--glow-red)',
+              lineHeight: 1.4,
+            }}>
+              ⚠ CAMERA ERROR: {cameraError}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
             <div className="spec-badge">📡 33 KEYPOINTS</div>
             <div className="spec-badge">🧠 DUAL-LAYER 252-ANGLE</div>
@@ -460,11 +535,11 @@ export default function PosChair() {
         </div>
       )}
 
-      {/* ── LOADING ── */}
+      {/* ── LOADING OVERLAY ── */}
       {appState === 'LOADING' && (
-        <div className="splash-screen">
+        <div className="splash-screen" style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--bg-void)' }}>
           <div className="splash-title">LOADING AI ENGINE</div>
-          <div className="splash-subtitle">Downloading MediaPipe BlazePose Full model...</div>
+          <div className="splash-subtitle">{loadingMsg}</div>
           <div className="loading-bar-container">
             <div className="loading-bar-fill" />
           </div>
@@ -474,35 +549,84 @@ export default function PosChair() {
         </div>
       )}
 
-      {/* ── CALIBRATION OVERLAY (over the camera) ── */}
-      {appState === 'CALIBRATING' && (
-        <>
-          <header className="header-bar">
-            <div className="header-logo">🎮 POS<span>CHAIR</span> <span style={{color:'var(--amber)'}}>// CALIBRATING</span></div>
-          </header>
-          <div className="main-content">
-            <section className="camera-section">
-              <video ref={videoRef} className="camera-video" playsInline muted />
-              <canvas ref={canvasRef} className="camera-canvas" />
-              <div className="camera-corner tl" /><div className="camera-corner tr" />
-              <div className="camera-corner bl" /><div className="camera-corner br" />
-              <div className="calib-overlay">
-                <div className="calib-title">SIT IN YOUR BEST POSTURE</div>
-                <div className="calib-sub">Head up · Shoulders level · Spine tall</div>
-                <div className="calib-bar-wrap">
-                  <div className="calib-bar" style={{ width: `${calibProgress}%` }} />
-                </div>
-                <div className="calib-pct">{calibProgress.toFixed(0)}%</div>
+      {/* ── PERSISTENT DASHBOARD & CAMERA ── */}
+      <header className="header-bar">
+        <div className="header-logo">
+          🎮 POS<span>CHAIR</span>
+          <span style={{ color: 'var(--green-dim)', marginLeft: 8 }}>v3.0 DUAL-LAYER</span>
+          {appState === 'CALIBRATING' && (
+            <span style={{ color: 'var(--amber)', marginLeft: 8 }}>// CALIBRATING</span>
+          )}
+        </div>
+        <div className="header-status">
+          {appState === 'ACTIVE' && (
+            <>
+              <span className="score-badge">SCORE: {score}/100</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', color: 'var(--green-dim)' }}>{fps}fps</span>
+              {calibration && (
+                <span style={{ fontFamily: 'var(--font-pixel)', fontSize: '7px', color: 'var(--amber)' }}>
+                  🎯 CAL
+                </span>
+              )}
+              <button
+                className="pixel-btn"
+                style={{ fontSize: '7px', padding: '4px 8px' }}
+                onClick={recalibrate}
+                id="recalibrate-btn"
+              >↺ RECAL</button>
+              <div className={`status-pill ${noPerson ? 'idle' : isGood ? 'good' : 'bad'}`}>
+                <div className="status-dot" />
+                {noPerson ? 'NO SIGNAL' : isGood ? 'GOOD' : 'BAD POSTURE'}
               </div>
-            </section>
-            <aside className="right-panel">
-              <div className="minimap-section">
-                <div className="section-header">SKELETON_WIREFRAME</div>
-                <div className="minimap-canvas-wrapper">
-                  <canvas ref={minimapRef} className="minimap-canvas" />
-                  <div className="minimap-scanline" />
-                </div>
+            </>
+          )}
+          {appState === 'CALIBRATING' && (
+            <div className="status-pill idle">
+              <div className="status-dot" />
+              CALIBRATING {calibProgress.toFixed(0)}%
+            </div>
+          )}
+        </div>
+      </header>
+
+      <div className="main-content">
+        {/* Camera Section - NEVER UNMOUNTS */}
+        <section className="camera-section">
+          <video ref={videoRef} className="camera-video" playsInline muted autoPlay />
+          <canvas ref={canvasRef} className="camera-canvas" />
+          <div className="camera-label">
+            {appState === 'CALIBRATING' ? 'CAM_01 // CALIBRATING BASELINE' : 'CAM_01 // MEDIAPIPE BLAZEPOSE FULL'}
+          </div>
+          <div className="camera-corner tl" /><div className="camera-corner tr" />
+          <div className="camera-corner bl" /><div className="camera-corner br" />
+
+          {/* Calibration overlay */}
+          {appState === 'CALIBRATING' && (
+            <div className="calib-overlay">
+              <div className="calib-title">SIT IN YOUR BEST POSTURE</div>
+              <div className="calib-sub">Head up · Shoulders level · Spine tall</div>
+              <div className="calib-bar-wrap">
+                <div className="calib-bar" style={{ width: `${calibProgress}%` }} />
               </div>
+              <div className="calib-pct">{calibProgress.toFixed(0)}%</div>
+            </div>
+          )}
+        </section>
+
+        {/* Right Panel */}
+        <aside className="right-panel">
+          {/* Skeleton Minimap */}
+          <div className="minimap-section">
+            <div className="section-header">SKELETON_WIREFRAME</div>
+            <div className="minimap-canvas-wrapper">
+              <canvas ref={minimapRef} className="minimap-canvas" />
+              <div className="minimap-scanline" />
+            </div>
+          </div>
+
+          {/* Dynamic Content based on Calibration vs Active */}
+          {appState === 'CALIBRATING' ? (
+            <>
               <div className="metrics-section">
                 <div className="section-header">CALIBRATION_GUIDE</div>
                 {[
@@ -524,59 +648,9 @@ export default function PosChair() {
                   <span style={{ fontSize: '14px' }}>Dual-layer consensus voting for 90%+ accuracy</span>
                 </div>
               </div>
-            </aside>
-          </div>
-        </>
-      )}
-
-      {/* ── ACTIVE DASHBOARD ── */}
-      {appState === 'ACTIVE' && (
-        <>
-          <header className="header-bar">
-            <div className="header-logo">🎮 POS<span>CHAIR</span><span style={{color:'var(--green-dim)',marginLeft:8}}>v3.0 DUAL-LAYER</span></div>
-            <div className="header-status">
-              <span className="score-badge">SCORE: {score}/100</span>
-              <span style={{ fontFamily:'var(--font-mono)', fontSize:'16px', color:'var(--green-dim)' }}>{fps}fps</span>
-              {calibration && (
-                <span style={{ fontFamily:'var(--font-pixel)', fontSize:'7px', color:'var(--amber)' }}>
-                  🎯 CAL
-                </span>
-              )}
-              <button
-                className="pixel-btn"
-                style={{ fontSize: '7px', padding: '4px 8px' }}
-                onClick={recalibrate}
-                id="recalibrate-btn"
-              >↺ RECAL</button>
-              <div className={`status-pill ${noPerson ? 'idle' : isGood ? 'good' : 'bad'}`}>
-                <div className="status-dot" />
-                {noPerson ? 'NO SIGNAL' : isGood ? 'GOOD' : 'BAD POSTURE'}
-              </div>
-            </div>
-          </header>
-
-          <div className="main-content">
-            {/* Camera */}
-            <section className="camera-section">
-              <video ref={videoRef} className="camera-video" playsInline muted />
-              <canvas ref={canvasRef} className="camera-canvas" />
-              <div className="camera-label">CAM_01 // MEDIAPIPE BLAZEPOSE FULL</div>
-              <div className="camera-corner tl" /><div className="camera-corner tr" />
-              <div className="camera-corner bl" /><div className="camera-corner br" />
-            </section>
-
-            {/* Right Panel */}
-            <aside className="right-panel">
-
-              {/* Skeleton Minimap */}
-              <div className="minimap-section">
-                <div className="section-header">SKELETON_WIREFRAME</div>
-                <div className="minimap-canvas-wrapper">
-                  <canvas ref={minimapRef} className="minimap-canvas" />
-                  <div className="minimap-scanline" />
-                </div>
-              </div>
-
+            </>
+          ) : (
+            <>
               {/* Live Metrics */}
               <div className="metrics-section">
                 <div className="section-header">LIVE_POSTURE_DATA {calibration ? '// CALIBRATED' : '// UNCALIBRATED'}</div>
@@ -729,11 +803,10 @@ export default function PosChair() {
                   </div>
                 )}
               </div>
-
-            </aside>
-          </div>
-        </>
-      )}
+            </>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
