@@ -62,6 +62,10 @@
   padding: 0;
 }
 
+img, video, canvas, svg {
+  max-width: 100%;
+}
+
 html, body {
   width: 100%;
   min-height: 100%;
@@ -92,11 +96,12 @@ body::before {
   position: relative;
   z-index: 1;
   max-width: 1600px;
+  width: 100%;
   margin: 0 auto;
-  padding: 24px 28px 48px;
+  padding: clamp(12px, 2.5vw, 28px);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: clamp(14px, 2vw, 24px);
 }
 
 /* ── Retro Cartridge Header Bar ────────────────────────────────────── */
@@ -105,14 +110,15 @@ body::before {
   border: var(--border-thick);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-brutal);
-  padding: 16px 24px;
+  padding: clamp(12px, 1.8vw, 16px) clamp(14px, 2.2vw, 24px);
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: clamp(12px, 1.5vw, 18px);
   position: relative;
   overflow: hidden;
+  width: 100%;
 }
 
 .cartridge-header::before {
@@ -126,7 +132,8 @@ body::before {
 .brand-section {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: clamp(10px, 1.5vw, 16px);
+  min-width: 0;
 }
 
 .brand-logo-badge {
@@ -146,18 +153,22 @@ body::before {
 
 .brand-img-badge {
   background: #000000;
-  padding: 4px 12px;
+  padding: 4px 10px;
   border: 3px solid var(--pop-yellow);
   box-shadow: 4px 4px 0px var(--pop-yellow);
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 48px;
+  height: clamp(38px, 4.5vw, 48px);
+  max-width: 110px;
+  flex-shrink: 0;
 }
 
 .header-logo-img {
-  height: 32px;
+  height: 100%;
+  max-height: 32px;
   width: auto;
+  max-width: 90px;
   object-fit: contain;
   filter: drop-shadow(0 2px 6px rgba(0, 255, 102, 0.3));
 }
@@ -167,12 +178,12 @@ body::before {
   justify-content: center;
   align-items: center;
   width: 100%;
-  margin: 10px 0;
+  margin: clamp(4px, 1.5vw, 10px) 0;
 }
 
 .splash-hero-logo {
-  max-width: 440px;
-  width: 90%;
+  max-width: min(440px, 85vw);
+  width: 100%;
   height: auto;
   object-fit: contain;
   filter: drop-shadow(0 8px 18px rgba(0, 240, 255, 0.25)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.8));
@@ -185,8 +196,10 @@ body::before {
 }
 
 .mini-hud-logo {
-  height: 18px;
+  height: 16px;
+  max-height: 16px;
   width: auto;
+  max-width: 40px;
   object-fit: contain;
   vertical-align: middle;
 }
@@ -195,21 +208,24 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .brand-title-wrap {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .brand-title {
   font-family: var(--font-sans);
-  font-size: 26px;
+  font-size: clamp(20px, 2.5vw, 26px);
   font-weight: 800;
   letter-spacing: -0.5px;
   color: var(--pop-white);
   text-transform: uppercase;
+  line-height: 1.15;
 }
 
 .brand-title span {
@@ -220,37 +236,39 @@ body::before {
   background: var(--pop-purple);
   color: var(--pop-white);
   font-family: var(--font-pixel);
-  font-size: 9px;
-  padding: 4px 10px;
+  font-size: clamp(8px, 1vw, 9px);
+  padding: 3px 8px;
   border: 2px solid var(--pop-black);
   border-radius: var(--radius-pill);
   box-shadow: 2px 2px 0px #000;
+  white-space: nowrap;
 }
 
 .brand-subtitle {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: clamp(11px, 1.4vw, 15px);
   color: var(--pop-muted);
   letter-spacing: 0.5px;
+  word-break: break-word;
 }
 
 /* Header HUD Telemetry Ribbon */
 .header-hud {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: clamp(8px, 1.2vw, 12px);
   flex-wrap: wrap;
 }
 
 .hud-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 6px;
+  padding: clamp(6px, 1vw, 8px) clamp(8px, 1.4vw, 14px);
   border: var(--border-subtle);
   border-radius: var(--radius-btn);
   font-weight: 700;
-  font-size: 14px;
+  font-size: clamp(12px, 1.2vw, 14px);
   box-shadow: var(--shadow-brutal-sm);
   white-space: nowrap;
 }
@@ -501,7 +519,7 @@ body::before {
 .camera-stage {
   position: relative;
   width: 100%;
-  height: 520px;
+  height: clamp(260px, 42vw, 520px);
   background: #000000;
   overflow: hidden;
 }
@@ -542,35 +560,38 @@ body::before {
 /* Neo-Brutalist HUD Reticle & Corner Brackets */
 .hud-corner {
   position: absolute;
-  width: 28px;
-  height: 28px;
+  width: clamp(18px, 2.5vw, 28px);
+  height: clamp(18px, 2.5vw, 28px);
   border-color: var(--pop-cyan);
   border-style: solid;
   z-index: 6;
   pointer-events: none;
 }
-.hud-corner.tl { top: 16px; left: 16px; border-width: 4px 0 0 4px; }
-.hud-corner.tr { top: 16px; right: 16px; border-width: 4px 4px 0 0; }
-.hud-corner.bl { bottom: 16px; left: 16px; border-width: 0 0 4px 4px; }
-.hud-corner.br { bottom: 16px; right: 16px; border-width: 0 4px 4px 0; }
+.hud-corner.tl { top: clamp(8px, 1.5vw, 16px); left: clamp(8px, 1.5vw, 16px); border-width: 4px 0 0 4px; }
+.hud-corner.tr { top: clamp(8px, 1.5vw, 16px); right: clamp(8px, 1.5vw, 16px); border-width: 4px 4px 0 0; }
+.hud-corner.bl { bottom: clamp(8px, 1.5vw, 16px); left: clamp(8px, 1.5vw, 16px); border-width: 0 0 4px 4px; }
+.hud-corner.br { bottom: clamp(8px, 1.5vw, 16px); right: clamp(8px, 1.5vw, 16px); border-width: 0 4px 4px 0; }
 
 .camera-hud-badge {
   position: absolute;
-  top: 18px;
+  top: clamp(10px, 1.8vw, 18px);
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.85);
   border: 2px solid var(--pop-cyan);
   border-radius: var(--radius-btn);
   color: var(--pop-cyan);
   font-family: var(--font-pixel);
-  font-size: 9px;
-  padding: 6px 14px;
+  font-size: clamp(8px, 1vw, 9px);
+  padding: clamp(4px, 0.8vw, 6px) clamp(8px, 1.2vw, 14px);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   z-index: 6;
   letter-spacing: 1px;
+  white-space: nowrap;
+  max-width: 90%;
+  justify-content: center;
 }
 
 .rec-dot {
@@ -580,6 +601,7 @@ body::before {
   background: var(--pop-magenta);
   box-shadow: 0 0 8px var(--pop-magenta);
   animation: blink-dot 1s infinite;
+  flex-shrink: 0;
 }
 
 @keyframes blink-dot {
@@ -591,22 +613,22 @@ body::before {
 .calib-overlay-card {
   position: absolute;
   inset: 0;
-  background: rgba(10, 12, 19, 0.88);
+  background: rgba(10, 12, 19, 0.9);
   backdrop-filter: blur(4px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: clamp(10px, 2vw, 16px);
   z-index: 10;
-  padding: 32px;
+  padding: clamp(16px, 3vw, 32px);
   text-align: center;
 }
 
 .calib-title {
   font-family: var(--font-sans);
   font-weight: 900;
-  font-size: 26px;
+  font-size: clamp(18px, 2.5vw, 26px);
   color: var(--pop-yellow);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -614,7 +636,7 @@ body::before {
 
 .calib-sub {
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: clamp(13px, 1.8vw, 20px);
   color: var(--pop-muted);
   max-width: 500px;
 }
@@ -622,7 +644,7 @@ body::before {
 .calib-progress-track {
   width: 100%;
   max-width: 480px;
-  height: 22px;
+  height: clamp(16px, 2vw, 22px);
   background: #000;
   border: var(--border-subtle);
   border-radius: var(--radius-btn);
@@ -639,23 +661,23 @@ body::before {
 
 .calib-pct-text {
   font-family: var(--font-pixel);
-  font-size: 16px;
+  font-size: clamp(12px, 1.5vw, 16px);
   color: var(--pop-yellow);
 }
 
 /* ── Card 2: Skeleton Radar ────────────────────────────────────────── */
 .radar-content {
-  padding: 16px;
+  padding: clamp(12px, 1.5vw, 16px);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: clamp(10px, 1.5vw, 14px);
   flex: 1;
 }
 
 .radar-canvas-wrap {
   position: relative;
   width: 100%;
-  height: 380px;
+  height: clamp(230px, 30vw, 380px);
   background: #06070a;
   border: var(--border-thick);
   border-radius: var(--radius-subcard);
@@ -688,11 +710,13 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 12px;
   background: var(--bg-subcard);
   border: 2px solid var(--pop-black);
   border-radius: var(--radius-btn);
-  font-size: 13px;
+  font-size: clamp(11px, 1.2vw, 13px);
   font-weight: 700;
 }
 
@@ -707,14 +731,15 @@ body::before {
   height: 10px;
   border-radius: 50%;
   border: 1px solid #000;
+  flex-shrink: 0;
 }
 
 /* ── Card 3: Posture Score & Health Meter ───────────────────────────── */
 .score-card-content {
-  padding: 24px;
+  padding: clamp(16px, 2vw, 24px);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: clamp(14px, 1.8vw, 20px);
   align-items: center;
   justify-content: center;
   text-align: center;
@@ -729,7 +754,7 @@ body::before {
 
 .score-giant-number {
   font-family: var(--font-sans);
-  font-size: 80px;
+  font-size: clamp(54px, 8vw, 80px);
   font-weight: 900;
   line-height: 1;
   letter-spacing: -3px;
@@ -742,7 +767,7 @@ body::before {
 .score-max-tag {
   font-family: var(--font-sans);
   font-weight: 800;
-  font-size: 24px;
+  font-size: clamp(18px, 2.5vw, 24px);
   color: var(--pop-muted);
 }
 
@@ -810,10 +835,10 @@ body::before {
 
 /* ── Card 4: Biomechanical Telemetry Grid ──────────────────────────── */
 .telemetry-grid {
-  padding: 20px;
+  padding: clamp(12px, 1.8vw, 20px);
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(135px, 20vw, 200px), 1fr));
+  gap: clamp(10px, 1.5vw, 16px);
   flex: 1;
 }
 
@@ -821,13 +846,14 @@ body::before {
   background: var(--bg-subcard);
   border: 2px solid var(--pop-black);
   border-radius: var(--radius-subcard);
-  padding: 16px;
+  padding: clamp(10px, 1.5vw, 16px);
   box-shadow: var(--shadow-brutal-sm);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 8px;
   transition: transform 0.1s ease;
+  min-width: 0;
 }
 
 .telemetry-tile:hover {
@@ -840,17 +866,18 @@ body::before {
   align-items: center;
   justify-content: space-between;
   color: var(--pop-muted);
-  font-size: 13px;
+  font-size: clamp(10px, 1.1vw, 13px);
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .tile-value {
   font-family: var(--font-sans);
-  font-size: 28px;
+  font-size: clamp(20px, 2.5vw, 28px);
   font-weight: 800;
   letter-spacing: -0.5px;
   line-height: 1.1;
+  word-break: break-word;
 }
 
 .tile-value.ok   { color: var(--pop-lime); }
@@ -858,9 +885,10 @@ body::before {
 .tile-value.bad  { color: var(--pop-magenta); }
 
 .tile-sub {
-  font-size: 12px;
+  font-size: clamp(10px, 1vw, 12px);
   font-weight: 600;
   color: var(--pop-muted);
+  word-break: break-word;
 }
 
 /* ── Card 5: Consensus & Issues Engine ──────────────────────────────── */
@@ -1019,52 +1047,55 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: clamp(12px, 3vw, 24px);
   overflow-y: auto;
 }
 
 .overlay-modal {
   background: var(--bg-card);
   border: 4px solid var(--pop-black);
-  border-radius: 24px;
+  border-radius: clamp(16px, 3vw, 24px);
   box-shadow: var(--shadow-brutal-lg);
-  padding: 44px 36px;
-  max-width: 680px;
+  padding: clamp(24px, 4vw, 44px) clamp(16px, 4vw, 36px);
+  max-width: min(680px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
+  gap: clamp(14px, 2.5vw, 24px);
   text-align: center;
   position: relative;
-  overflow: hidden;
 }
 
 .overlay-modal::before {
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 8px;
+  height: 6px;
   background: linear-gradient(90deg, var(--pop-yellow), var(--pop-cyan), var(--pop-magenta), var(--pop-lime));
 }
 
 .modal-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: var(--pop-yellow);
   color: var(--pop-black);
-  padding: 6px 14px;
+  padding: 5px 12px;
   border: 2px solid #000;
   border-radius: var(--radius-pill);
   font-family: var(--font-pixel);
-  font-size: 10px;
+  font-size: clamp(8px, 1.1vw, 10px);
   box-shadow: 2px 2px 0px #000;
+  text-align: center;
 }
 
 .modal-title {
   font-family: var(--font-sans);
-  font-size: 38px;
+  font-size: clamp(24px, 4.5vw, 38px);
   font-weight: 900;
   line-height: 1.1;
   text-transform: uppercase;
@@ -1076,9 +1107,9 @@ body::before {
 }
 
 .modal-sub {
-  font-size: 16px;
+  font-size: clamp(13px, 1.8vw, 16px);
   color: var(--pop-muted);
-  max-width: 480px;
+  max-width: 500px;
   line-height: 1.5;
 }
 
@@ -1086,35 +1117,119 @@ body::before {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 12px;
-  margin: 8px 0;
+  gap: clamp(6px, 1.5vw, 12px);
+  margin: 4px 0;
+  width: 100%;
 }
 
 .feature-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: var(--bg-subcard);
   border: 2px solid var(--pop-black);
-  padding: 8px 14px;
+  padding: clamp(6px, 1vw, 8px) clamp(8px, 1.5vw, 14px);
   border-radius: var(--radius-btn);
-  font-size: 13px;
+  font-size: clamp(11px, 1.2vw, 13px);
   font-weight: 700;
   box-shadow: 3px 3px 0px #000;
+  white-space: nowrap;
 }
 
 .error-banner {
   background: #2c0e18;
   border: 3px solid var(--pop-magenta);
   border-radius: var(--radius-btn);
-  padding: 16px 20px;
+  padding: clamp(12px, 2vw, 16px) clamp(14px, 2.5vw, 20px);
   color: var(--pop-white);
-  font-size: 14px;
+  font-size: clamp(12px, 1.5vw, 14px);
   font-weight: 700;
   box-shadow: 4px 4px 0px var(--pop-black);
   max-width: 520px;
+  width: 100%;
   display: flex;
   align-items: flex-start;
   gap: 12px;
   text-align: left;
+}
+
+/* ── Multi-Tier Dynamic Responsive Rules ───────────────────────────── */
+
+/* 1. Medium Desktop / Laptop (880px - 1149px) */
+@media (min-width: 880px) and (max-width: 1149px) {
+  .col-span-7 { grid-column: span 12; }
+  .col-span-5 { grid-column: span 12; }
+  .col-span-4 { grid-column: span 5; }
+  .col-span-8 { grid-column: span 7; }
+  .camera-stage { height: clamp(340px, 45vw, 460px); }
+  .radar-canvas-wrap { height: clamp(260px, 32vw, 340px); }
+}
+
+/* 2. Tablet Portrait (641px - 879px) */
+@media (min-width: 641px) and (max-width: 879px) {
+  .col-span-12, .col-span-8, .col-span-7, .col-span-6, .col-span-5, .col-span-4 {
+    grid-column: span 12;
+  }
+  .camera-stage { height: clamp(300px, 48vw, 420px); }
+  .radar-canvas-wrap { height: clamp(240px, 34vw, 320px); }
+  .telemetry-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* 3. Mobile Handsets (<= 640px) */
+@media (max-width: 640px) {
+  .col-span-12, .col-span-8, .col-span-7, .col-span-6, .col-span-5, .col-span-4 {
+    grid-column: span 12;
+  }
+  .cartridge-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .brand-section {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .header-hud {
+    width: 100%;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .camera-stage {
+    height: clamp(240px, 56vw, 360px);
+  }
+  .radar-canvas-wrap {
+    height: clamp(200px, 45vw, 280px);
+  }
+  .telemetry-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 10px;
+  }
+  .telemetry-tile {
+    padding: 10px;
+  }
+  .brutal-hero-btn {
+    width: 100%;
+    padding: 14px 20px;
+    font-size: 16px;
+  }
+}
+
+/* 4. Ultra-Compact Mobile Screens (<= 380px) */
+@media (max-width: 380px) {
+  .telemetry-grid {
+    grid-template-columns: 1fr;
+  }
+  .brand-title {
+    font-size: 18px;
+  }
+  .brand-subtitle {
+    font-size: 11px;
+  }
+  .hud-pill {
+    padding: 5px 8px;
+    font-size: 11px;
+  }
 }
