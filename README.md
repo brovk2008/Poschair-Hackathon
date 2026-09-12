@@ -2,19 +2,32 @@
 
 <img src="./logo.png" alt="PosChair Logo" width="520" />
 
-# POSCHAIR — Real-Time AI Posture Monitor
+# POSCHAIR — Omnidirectional AI Posture Engine
 
-**Real-time posture monitoring for desk workers using computer vision and voice AI.**  
-No wearable. No app. Just your webcam, your browser, and an AI coach that talks to you.
+**Real-time posture monitoring for desk workers using omnidirectional computer vision and two-part pedagogical voice AI.**  
+No wearable. No app. Just your webcam, your browser, and an AI coach that identifies what's wrong and immediately tells you how to fix it.
 
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-BlazePose_Full-blue?style=flat-square)
-![Gemini](https://img.shields.io/badge/Gemini-3.8_Flash-orange?style=flat-square&logo=google)
+![YOLOv8m](https://img.shields.io/badge/YOLOv8m-Pose_Heavy-green?style=flat-square)
+![Gemini](https://img.shields.io/badge/Gemini-3.6_Flash-orange?style=flat-square&logo=google)
 ![ElevenLabs](https://img.shields.io/badge/ElevenLabs-Turbo_v2-purple?style=flat-square)
+![Cloudflare](https://img.shields.io/badge/Cloudflare_Tunnel-Live_Public-yellow?style=flat-square&logo=cloudflare)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)
 ![Vercel](https://img.shields.io/badge/Deploy-Vercel-black?style=flat-square&logo=vercel)
 
 </div>
+
+---
+
+## 🌐 Live Public Hosted Endpoint
+
+| Component | Target URL | Status |
+|---|---|---|
+| **Heavy Pose Cloudflare Tunnel** | **`https://instructors-platforms-biographies-frederick.trycloudflare.com`** | **LIVE / ONLINE** |
+| **Health Check** | `https://instructors-platforms-biographies-frederick.trycloudflare.com/health` | `status: healthy` |
+
+> Set `HEAVY_MODEL_URL=https://instructors-platforms-biographies-frederick.trycloudflare.com` in your Vercel Environment Variables to connect your cloud deployment directly to laptop GPU pose inference with zero cloud cost!
 
 ---
 
@@ -25,58 +38,49 @@ Millions of desk workers develop chronic neck and back pain from sustained poor 
 - **Screen banners / pop-ups** → ignored, disruptive, require looking at a screen
 - **Wearables** → expensive, require charging, people forget to wear them
 - **Timer-based reminders** → tell you *when* to check, not *what* is wrong
+- **Vague advice** → "sit up straight" doesn't specify if your head is craning forward, tilted sideways, or if your shoulders are elevated
 
-None of them work for visually impaired users. None of them tell you exactly *what* to fix.
+None of them work for visually impaired users. None of them deliver structured, two-part pedagogical coaching.
 
 ---
 
 ## The Solution
 
-PosChair uses a standard webcam to continuously track 33 body keypoints via **MediaPipe BlazePose** running entirely in the browser. When it detects that you've been in a bad position for more than 30 seconds, it:
+PosChair uses standard webcams to continuously track 33 body keypoints via **MediaPipe BlazePose** (and an optional **YOLOv8m-Pose Heavy Server** via Cloudflare Tunnel). When sustained poor posture is detected for more than 30 seconds, it:
 
-1. Sends your posture metrics to **Gemini 3.8 Flash**, which generates a personalized, context-aware correction
-2. Passes the text to **ElevenLabs**, which speaks it aloud naturally — *"Draw your chin back, your ears are 18° in front of your shoulders"*
-3. Shows the correction as a popup with real-time data
-
-Zero screen attention required. It works in the background while you work.
+1. **Diagnoses the exact anatomical defect** (Forward Head Crane, Lateral Tilt, Shoulder Shrug, Asymmetry, or Trunk Lean).
+2. Sends the telemetry to **Gemini 3.6/3.7 Flash**, enforcing a strict **Two-Part Pedagogical Output**:
+   - **Part 1 (The Problem)**: Names the exact deviation (e.g. *"Head tilt to the right."*).
+   - **Part 2 (The Actionable Fix)**: Tells the user the exact physical correction (e.g. *"Keep your neck straight and level your head."*).
+3. Synthesizes the correction via **ElevenLabs Turbo v2** (~300ms latency) — zero screen attention needed.
+4. Renders telemetry across an **Extreme Neo-Brutalist 16-Bit Retro Bento Dashboard** with zero emojis and 100% fluid auto-adjustable responsive layout.
 
 ---
 
-## Demo
+## Demo & Bento Architecture
 
 ```
-[SPLASH SCREEN] → ▶ INITIALIZE SYSTEM
+[SPLASH SCREEN] → ▶ INITIALIZE SYSTEM (Webcam Permission + 5s Neutral Baseline)
        ↓
-[LOADING] MediaPipe BlazePose Full downloads (~2MB, cached)
-       ↓
-[CALIBRATION] Sit straight for 3 seconds → captures your personal neutral baseline
-       ↓
-[ACTIVE DASHBOARD]
-  ┌──────────────────────────────┬──────────────────────────┐
-  │                              │ ┌──────────────────────┐ │
-  │   WEBCAM FEED                │ │  SKELETON MINIMAP    │ │
-  │   + Green skeleton overlay   │ │  (wireframe only)    │ │
-  │   + Amber joint dots         │ └──────────────────────┘ │
-  │   + Red alert box on         │                          │
-  │     bad posture zones        │ ┌──────────────────────┐ │
-  │                              │ │ > HEAD_ANGLE: 161.3° │ │
-  │   [Corner brackets, CRT      │ │ > TILT:      +2.1°   │ │
-  │    scanlines, pixel art UI]  │ │ > SHRUG:     CLEAR   │ │
-  │                              │ │ > ASYMMETRY: 1.4%    │ │
-  │                              │ │ > LEAN:      +0.03   │ │
-  │                              │ │ > FHP_DEPTH: -0.021  │ │
-  │                              │ │ > ISSUES:    NONE    │ │
-  │                              │ │ POSTURE_SCORE: 94    │ │
-  │                              │ └──────────────────────┘ │
-  │                              │                          │
-  │                              │ ┌──────────────────────┐ │
-  │                              │ │ 💡 TIP // GEMINI     │ │
-  │                              │ │ "Pull your chin back │ │
-  │                              │ │  and roll shoulders  │ │
-  │                              │ │  down and back."     │ │
-  │                              │ │ ▶ ELEVENLABS PLAYING │ │
-  │                              │ └──────────────────────┘ │
-  └──────────────────────────────┴──────────────────────────┘
+[ACTIVE BENTO DASHBOARD // 12-COLUMN NEO-BRUTALIST GRID]
+┌──────────────────────────────────────────────┬──────────────────────────────────────────┐
+│ 1. TARGETING STAGE // WEBCAM HUD (Span 7)    │ 2. SKELETON RADAR // 3D TOPOLOGY (Span 5)│
+│ + Live 720p stream with CRT scanlines        │ + Real-time 3D wireframe radar sweep     │
+│ + Corner brackets & 33 BlazePose keypoints   │ + Joint node alignment indicators        │
+│ + In-stream calibration target overlay       │ + High-contrast retro topology map       │
+├──────────────────────────────┬───────────────┴──────────────────────────────────────────┤
+│ 3. POSTURE HEALTH (Span 4)   │ 4. BIOMECHANICAL TELEMETRY MATRIX (Span 8)               │
+│ + Score: 94/100 (Giant HUD)  │ + Head Alignment (Front Perspective Crane / Profile CVA) │
+│ + Health Lives (Hearts)      │ + Lateral Tilt: +1.8° Coronal                            │
+│ + Perfect Streak Timer       │ + Shoulder Shrug: CLEAR                                  │
+│ + Real-time Status Banner    │ + Asymmetry: 1.4% | Trunk Lean: +0.02 | 3D Torso Shift   │
+├──────────────────────────────┴───────────────┬──────────────────────────────────────────┤
+│ 5. AI VOICE COACH // GEMINI + ELEVENLABS (7) │ 6. CONSENSUS ENGINE & CONTROLS (Span 5)  │
+│ + "Head tilt to the right.                   │ + Layer 2 252-Angle Manifold Consensus   │
+│    Keep your neck straight and level head."  │ + Active anatomical defect checklist     │
+│ + Active ElevenLabs Audio Equalizer Waveform │ + Sustained bad posture timer            │
+│ + Sub-300ms ultra-low latency response       │ + 1-Click 5-Second Baseline Recalibrate  │
+└──────────────────────────────────────────────┴──────────────────────────────────────────┘
 ```
 
 ---
@@ -337,31 +341,44 @@ T_cooldown    │     ┌─────────────────┐
 
 ---
 
-### Stage 4: AI Correction Generation (Gemini 3.8 Flash)
+### Stage 4: AI Voice Coaching — Two-Part Pedagogical Feedback Loop
 
-When the alert triggers, a structured prompt is sent to the `/api/analyze` route:
+When an alert triggers, PosChair enforces a strict **Two-Part Pedagogical Feedback Formula**:
+1. **Part 1 — The Problem**: Identifies and names the exact anatomical issue.
+2. **Part 2 — The Actionable Fix**: Delivers the specific physical movement required to correct it.
+
+#### 📋 Biomechanical Action Formula Catalog
+
+| Detected Postural Issue | Part 1: Problem Name | Part 2: Actionable Fix |
+|:---|:---|:---|
+| **Forward Head Posture (FHP)** | `Forward head crane.` | `Draw your chin back and align your ears over your shoulders.` |
+| **Lateral Head Tilt** | `Head tilt to the right / left.` | `Keep your neck straight and level your head.` |
+| **Shoulder Shrug (Traps)** | `Elevated shoulders.` | `Drop your shoulders away from your ears and relax your traps.` |
+| **Shoulder Asymmetry** | `Uneven shoulders.` | `Level your shoulders to equal height.` |
+| **Trunk Lean (Spine)** | `Torso leaning to the right / left.` | `Sit tall and center your weight evenly on both hips.` |
+
+#### 🤖 Gemini Pipeline & System Prompt
+
+A structured prompt is dispatched to `/api/analyze` using the verified Gemini API models (`gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-flash-latest`):
 
 ```
-You are PosChair, an AI posture coach for desk workers.
-The user has maintained poor posture for 47 seconds.
+You are PosChair, an AI posture voice coach. Poor posture detected for 34s.
 
-Detected issues: FORWARD_HEAD: Head pitched forward (138.2° / target: 149°+) [MODERATE]
-Primary correction hint: Draw chin back — bring your ears over your shoulders.
-Posture score: 61/100
+DIAGNOSED PROBLEM: Head tilt to the right
+PHYSICAL FIX ACTION: Keep your neck straight and level your head.
 
-Tone: Be clear and specific. They need to correct this now.
+MANDATORY RESPONSE FORMAT:
+You MUST speak in exactly two parts:
+Part 1 (The Problem): State the exact diagnosed problem ("Head tilt to the right.").
+Part 2 (The Fix): Tell the user how to fix it immediately ("Keep your neck straight and level your head.").
 
-Write ONE specific, actionable voice correction in 1-2 short sentences (max 25 words).
-- Address the #1 issue directly by body part
-- Give the exact corrective movement
-- No filler words ("I notice", "It seems", "Try to")
-- Sound human, not robotic
+Total length must be under 16 words. Never include filler words like "Hey", "Oops", "I noticed", or "Please".
+Exact Output Format: "Head tilt to the right. Keep your neck straight and level your head."
 ```
 
-The prompt adapts urgency with duration:
-- **30–60s** → `GENTLE` — encouraging, first reminder
-- **60–90s** → `FIRM` — clear, direct
-- **90s+** → `URGENT` — firm, two sentences
+**Key Optimizations:**
+- **Zero Filler**: Instructed with `temperature: 0.2` and strict length limits (under 16 words) to eliminate conversational fluff.
+- **Deterministic Biomechanical Fallback**: If Gemini experiences transient network latency, the engine automatically formats `${topIssue.problemName}. ${topIssue.fixAction}` so voice coaching is instantaneous and never fails.
 
 ---
 
@@ -463,14 +480,15 @@ npm run tunnel
 
 | Layer | Technology | Why |
 |---|---|---|
-| Framework | Next.js 14 (App Router) | API routes + Vercel deployment |
-| Pose Detection | MediaPipe BlazePose Full (WASM) | Only browser-native model with Z-depth + ear landmarks |
-| AI Analysis | Gemini 3.8 Flash (Google AI Studio) | Fastest available on account, sub-500ms |
-| Voice TTS | ElevenLabs Rachel, eleven_turbo_v2 | Lowest latency, highest clarity |
-| Language | TypeScript | Type safety for landmark data |
-| Styling | Vanilla CSS | 8-bit arcade pixel art design system |
-| Font | Press Start 2P + VT323 | Pixel aesthetic, terminal readouts |
-| Deployment | Vercel | Zero-config Next.js deploy |
+| **Framework** | Next.js 14 (App Router) | High-performance API routes + edge deployment |
+| **Browser Pose Engine** | MediaPipe BlazePose Full (WASM) | 33 keypoints, 3D Z-depth, runs fully local on client |
+| **Heavy Pose Server** | YOLOv8m-Pose + FastAPI (Python) | Desktop-grade precision, GPU-accelerated |
+| **Edge Tunneling** | Cloudflare Tunnel | Exposes local laptop GPU to Vercel via secure SSL URL |
+| **AI Pedagogical Analysis** | Gemini 3.6 / 3.7 Flash | Sub-400ms structured 2-part diagnosis and physical fix |
+| **Voice TTS Engine** | ElevenLabs Turbo v2 (Rachel) | Ultra-low ~300ms latency voice feedback |
+| **Icons & Visuals** | Lucide React | High-contrast brutalist geometry, zero emojis |
+| **Styling & Layout** | Vanilla CSS + Bento Grid | Fluid responsive auto-adjustable design system |
+| **Typography** | Space Grotesk + Press Start 2P + VT323 | Neo-brutalist sans-serif + retro ROM aesthetic |
 
 ---
 
@@ -480,57 +498,67 @@ npm run tunnel
 poschair/
 ├── app/
 │   ├── api/
-│   │   ├── analyze/route.ts       # Gemini API → correction text
+│   │   ├── analyze/route.ts       # Gemini API → 2-part pedagogical diagnosis
 │   │   ├── speak/route.ts         # ElevenLabs API → audio stream
 │   │   └── heavy-pose/route.ts    # Proxies frames to Cloudflare Tunnel / Python server
-│   ├── globals.css                # Complete 8-bit design system
-│   ├── layout.tsx                 # Root layout + Google Fonts
-│   └── page.tsx                   # Main dashboard (v3.0 dual-layer UI & state machine)
+│   ├── globals.css                # 16-bit retro neo-brutalist design system & responsive CSS
+│   ├── layout.tsx                 # Root layout, favicon & Google Fonts
+│   └── page.tsx                   # Main bento dashboard, state machine, and canvas HUD
 ├── lib/
-│   └── posture.ts                 # Dual-layer posture engine (v3.0)
+│   └── posture.ts                 # Omnidirectional dual-layer posture engine
 │       ├── Layer 1: 6 biomechanical smoothed metrics
 │       ├── Layer 2: 252-angle consensus voting
+│       ├── Omnidirectional perspective crane & torso T-frame Ẑ shift
 │       ├── Visibility-weighted score calculation
-│       ├── Hysteresis thresholds (68 enter / 76 exit)
 │       └── 5-second calibration with 252-angle baseline
 ├── server/
 │   ├── heavy_pose_server.py       # FastAPI YOLOv8m-pose server
 │   ├── start_server.ps1           # Startup script for Python server
 │   ├── start_tunnel.ps1           # Startup script for Cloudflare Tunnel
 │   └── README.md                  # Heavy model & tunnel instructions
+├── public/
+│   └── logo.png                   # Official PosChair spine badge & favicon
+├── logo.png                       # High-res root asset
 ├── .env.local                     # API keys (gitignored)
-├── .gitignore
-├── next.config.js
-├── package.json
-├── tsconfig.json
-├── run.bat                     # 1-click full stack launcher (Next.js + heavy model)
-└── run_heavy_vercel.bat        # 1-click launcher for Heavy Model + Cloudflare Tunnel
+├── run.bat                        # 1-click full stack launcher (Next.js + heavy model)
+└── run_heavy_vercel.bat           # 1-click launcher for Heavy Model + Cloudflare Tunnel
 ```
 
 ---
 
-## Design System — 8-Bit Arcade
+## 🎨 Design System — 16-Bit Retro ROM x Bento Dashboard x Extreme Neo-Brutalist Pop
 
-Inspired by retro CRT terminal aesthetics and arcade game UIs (Nothing's dot-matrix design, Habbo Hotel's pixelated community interfaces).
+PosChair combines 80s/90s cartridge game aesthetics with bleeding-edge neo-brutalism and high-density bento architecture:
 
-**Color Palette:**
-```
---bg-void:      #020804   // Deep black-green
---green-neon:   #00ff41   // Matrix terminal green
---amber:        #ffd700   // Joint dots, calibration, alerts
---orange:       #ff6b35   // Warning accents
---red-alert:    #ff0040   // Bad posture, critical alerts
---cyan:         #00e5ff   // Secondary data
-```
+- **Strict Anti-Slop Rules**: Zero generic emojis. Every single interactive element uses clean, vector `lucide-react` icons.
+- **Neo-Brutalist Color Palette**:
+  ```css
+  --pop-yellow:      #FFE600;  /* Cartridge badges & warnings */
+  --pop-cyan:        #00F0FF;  /* HUD reticles & telemetry */
+  --pop-magenta:     #FF2E93;  /* Deviation alerts & lives */
+  --pop-lime:        #00FF66;  /* Optimal alignment & scores */
+  --pop-purple:      #A855F7;  /* AI voice coach & chips */
+  --bg-card:         #121520;  /* High-contrast dark substrate */
+  ```
+- **Neo-Brutalist Borders & Shadows**: Thick `3px solid #000` borders with crisp offset drop shadows (`5px 5px 0px #000`).
+- **Retro CRT Scanlines**: In-stream scanline overlays and corner brackets give the camera HUD authentic 16-bit arcade vibes.
 
-**Effects:**
-- `repeating-linear-gradient` scanlines over camera (CRT effect)
-- `text-shadow` neon glow on all green text
-- `box-shadow` pulsing glow animation on status badges
-- `animation: blink` on status dots (classic arcade heartbeat)
-- Pixel corner brackets around camera frame
-- `Press Start 2P` font for headings/labels
-- `VT323` monospace for terminal-style live data
+---
+
+## 📱 Fluid Responsiveness & Auto-Adjustable UI
+
+The entire layout is engineered to fluidly scale from multi-monitor ultrawide setups down to compact mobile phones without horizontal scrolling or text clipping:
+
+| Viewport | Range | Auto-Adjust Behavior |
+|---|---|---|
+| **Desktop / Ultrawide** | $\ge 1150\text{px}$ | 12-Column Bento Grid (`7/5`, `4/8`, `7/5`), fluid `clamp()` stage heights |
+| **Laptop / Landscape** | $880\text{px} - 1149\text{px}$ | Camera stage spans 12 cols, Radar & Health Gauge pair into 2 equal columns (span 6 each) |
+| **Tablet Portrait** | $641\text{px} - 879\text{px}$ | Bento cards stack sequentially, telemetry matrix auto-fits into 3 columns |
+| **Mobile Handsets** | $\le 640\text{px}$ | Cartridge header flexes to vertical stack, telemetry renders 2 columns, modals scale within `96vw` |
+| **Ultra-Compact Phones** | $\le 380\text{px}$ | Telemetry shifts to 1 column, badges scale down with `clamp()` |
+
+- **Dynamic Canvas Sizing**: Canvas buffers adapt dynamically to `canvas.offsetWidth` and `canvas.offsetHeight` every frame so skeletons never distort when resizing the browser window.
+- **Global Media Bounds**: `img, video, canvas, svg { max-width: 100%; }` guarantees zero viewport blowouts.
 
 ---
 
