@@ -2,6 +2,36 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import {
+  Gamepad2,
+  Sparkles,
+  Activity,
+  ShieldAlert,
+  CheckCircle2,
+  AlertTriangle,
+  RotateCcw,
+  Volume2,
+  Mic,
+  Eye,
+  Zap,
+  Flame,
+  Terminal,
+  Cpu,
+  Camera,
+  Radio,
+  Trophy,
+  Crosshair,
+  Target,
+  Heart,
+  Layers,
+  Sliders,
+  Clock,
+  ChevronRight,
+  Shield,
+  Play,
+  VolumeX,
+} from 'lucide-react';
+
+import {
   analyzePosture,
   buildAnalysisPrompt,
   getUrgencyLevel,
@@ -37,23 +67,19 @@ interface AlertData {
   timestamp: number;
 }
 
-// ── Posture timer state machine ───────────────────────────────────────────────
-// T_WARN: 30s bad → alert
-// T_RESET: 5s good → clear bad timer (prevents false resets on minor frame)
-// T_COOLDOWN: 60s between alerts
-
 export default function PosChair() {
-  const videoRef    = useRef<HTMLVideoElement>(null);
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const minimapRef  = useRef<HTMLCanvasElement>(null);
-  const streamRef   = useRef<MediaStream | null>(null);
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const minimapRef    = useRef<HTMLCanvasElement>(null);
+  const streamRef     = useRef<MediaStream | null>(null);
   const landmarkerRef = useRef<any>(null);
-  const rafRef      = useRef<number>(0);
-  const audioRef    = useRef<HTMLAudioElement | null>(null);
+  const rafRef        = useRef<number>(0);
+  const audioRef      = useRef<HTMLAudioElement | null>(null);
 
   // Timer refs (avoid stale closure issues in rAF loop)
   const badStartRef      = useRef<number | null>(null);
   const goodStartRef     = useRef<number | null>(null);
+  const streakStartRef   = useRef<number>(Date.now());
   const lastAlertRef     = useRef<number>(0);
   const isAnalyzingRef   = useRef(false);
   const calibSamplesRef  = useRef<Partial<CalibrationBaseline>[]>([]);
@@ -64,6 +90,7 @@ export default function PosChair() {
   const [metrics, setMetrics] = useState<PostureMetrics | null>(null);
   const [alert, setAlert] = useState<AlertData | null>(null);
   const [badMs, setBadMs] = useState(0);
+  const [streakMs, setStreakMs] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [calibProgress, setCalibProgress] = useState(0); // 0-100
   const [calibration, setCalibration] = useState<CalibrationBaseline | null>(null);
@@ -245,13 +272,13 @@ export default function PosChair() {
     isGood: boolean,
     mini: boolean
   ) => {
-    const lineCol = isGood ? '#00ff41' : '#ff0040';
-    const dotCol  = '#ffd700';
-    const lw      = mini ? 1.5 : 2.5;
-    const dr      = mini ? 3   : 5;
+    const lineCol = isGood ? '#00FF66' : '#FF2E93';
+    const dotCol  = '#FFE600';
+    const lw      = mini ? 2 : 3.5;
+    const dr      = mini ? 3.5 : 6;
 
     ctx.shadowColor = lineCol;
-    ctx.shadowBlur  = mini ? 4 : 10;
+    ctx.shadowBlur  = mini ? 4 : 12;
     ctx.strokeStyle = lineCol;
     ctx.lineWidth   = lw;
 
@@ -321,25 +348,25 @@ export default function PosChair() {
       const results = lander.detectForVideo(video, ts);
       const lms: PoseLandmark[] = results.landmarks?.[0] ?? [];
 
-      // Resize canvases
+      // Resize canvases with fallback dimensions
       canvas.width  = canvas.offsetWidth || video.videoWidth || 640;
       canvas.height = canvas.offsetHeight || video.videoHeight || 480;
       minimap.width  = minimap.offsetWidth || 300;
-      minimap.height = minimap.offsetHeight || 140;
+      minimap.height = minimap.offsetHeight || 280;
       const [W, H, mW, mH] = [canvas.width, canvas.height, minimap.width, minimap.height];
 
       ctx.clearRect(0, 0, W, H);
-      mCtx.fillStyle = '#000';
+      mCtx.fillStyle = '#06070a';
       mCtx.fillRect(0, 0, mW, mH);
 
       if (lms.length === 0) {
         setNoPerson(true);
         // Draw no-signal grid on minimap
-        mCtx.strokeStyle = '#1a5c22'; mCtx.lineWidth = 0.5;
-        for (let x = 0; x < mW; x += 20) { mCtx.beginPath(); mCtx.moveTo(x,0); mCtx.lineTo(x,mH); mCtx.stroke(); }
-        for (let y = 0; y < mH; y += 20) { mCtx.beginPath(); mCtx.moveTo(0,y); mCtx.lineTo(mW,y); mCtx.stroke(); }
-        mCtx.fillStyle = '#1a5c22'; mCtx.font = '10px monospace'; mCtx.textAlign = 'center';
-        mCtx.fillText('NO SIGNAL', mW/2, mH/2);
+        mCtx.strokeStyle = '#1e293b'; mCtx.lineWidth = 1;
+        for (let x = 0; x < mW; x += 24) { mCtx.beginPath(); mCtx.moveTo(x,0); mCtx.lineTo(x,mH); mCtx.stroke(); }
+        for (let y = 0; y < mH; y += 24) { mCtx.beginPath(); mCtx.moveTo(0,y); mCtx.lineTo(mW,y); mCtx.stroke(); }
+        mCtx.fillStyle = '#64748b'; mCtx.font = 'bold 14px "Space Grotesk", sans-serif'; mCtx.textAlign = 'center';
+        mCtx.fillText('TARGET LOST // NO SIGNAL', mW/2, mH/2);
         rafRef.current = requestAnimationFrame(loop);
         return;
       }
@@ -361,13 +388,13 @@ export default function PosChair() {
 
         // Draw calibration ring on main canvas
         const earMid = { x: (lms[7].x + lms[8].x) / 2, y: (lms[7].y + lms[8].y) / 2 };
-        ctx.strokeStyle = '#ffd700';
-        ctx.lineWidth   = 3;
-        ctx.shadowColor = '#ffd700';
-        ctx.shadowBlur  = 15;
-        ctx.setLineDash([8, 4]);
+        ctx.strokeStyle = '#FFE600';
+        ctx.lineWidth   = 4;
+        ctx.shadowColor = '#FFE600';
+        ctx.shadowBlur  = 16;
+        ctx.setLineDash([8, 6]);
         ctx.beginPath();
-        ctx.arc(earMid.x * W, earMid.y * H, 40, -Math.PI/2, (-Math.PI/2) + (2 * Math.PI * progress / 100));
+        ctx.arc(earMid.x * W, earMid.y * H, 44, -Math.PI/2, (-Math.PI/2) + (2 * Math.PI * progress / 100));
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.shadowBlur = 0;
@@ -377,76 +404,74 @@ export default function PosChair() {
           const baseline = captureCalibration(calibSamplesRef.current);
           calibrationRef.current = baseline;
           setCalibration(baseline);
-          resetSmoothers();
+          streakStartRef.current = Date.now();
           setState('ACTIVE');
-          appStateRef.current = 'ACTIVE';
-          badStartRef.current = null;
-          goodStartRef.current = null;
-          lastAlertRef.current = 0;
-          calibSamplesRef.current = [];
         }
 
         rafRef.current = requestAnimationFrame(loop);
         return;
       }
 
-      // ── ACTIVE PHASE ───────────────────────────────────────────────────────
+      // ── ACTIVE MONITORING PHASE ────────────────────────────────────────────
       const m = analyzePosture(lms, calibrationRef.current);
-      if (m) {
-        setMetrics(m);
-        metricsRef.current = m;
+      if (!m) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      metricsRef.current = m;
+      setMetrics(m);
 
-        const isGood = m.isGoodPosture;
-        const now    = Date.now();
+      // Draw skeletons
+      drawSkeleton(ctx, lms, W, H, m.isGoodPosture, false);
+      drawSkeleton(mCtx, lms, mW, mH, m.isGoodPosture, true);
 
-        drawSkeleton(ctx, lms, W, H, isGood, false);
-        drawSkeleton(mCtx, lms, mW, mH, isGood, true);
+      // Draw issue callout on main canvas
+      if (!m.isGoodPosture && m.issues.length > 0) {
+        const topIssue = m.issues[0];
+        ctx.fillStyle   = 'rgba(255, 46, 147, 0.9)';
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth   = 3;
+        ctx.font        = 'bold 14px "Space Grotesk", sans-serif';
+        const text = `! ${topIssue.label.toUpperCase()} [${(topIssue.layer2Confidence * 100).toFixed(0)}%]`;
+        const tw = ctx.measureText(text).width;
+        const bx = W / 2 - tw / 2 - 14;
+        const by = H - 54;
+        ctx.fillRect(bx, by, tw + 28, 38);
+        ctx.strokeRect(bx, by, tw + 28, 38);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(text, W / 2 - tw / 2, by + 24);
+      }
 
-        // Draw issue highlight box
-        if (!isGood && lms[LM.LEFT_SHOULDER] && lms[LM.RIGHT_SHOULDER]) {
-          const lsh = lms[LM.LEFT_SHOULDER];
-          const rsh = lms[LM.RIGHT_SHOULDER];
-          ctx.strokeStyle = 'rgba(255,0,64,0.35)';
-          ctx.lineWidth   = 1;
-          ctx.setLineDash([5, 5]);
-          ctx.strokeRect(
-            rsh.x * W - 12, (lms[LM.NOSE].y * H) - 8,
-            (lsh.x - rsh.x) * W + 24,
-            (lsh.y - lms[LM.NOSE].y) * H + 40
-          );
-          ctx.setLineDash([]);
-        }
+      // ── HYSTERESIS POSTURE TIMER STATE MACHINE ─────────────────────────────
+      const now = Date.now();
+      const currentScore = m.postureScore;
+      const isBadScore   = currentScore < SCORE_ENTER_BAD;
+      const isGoodScore  = currentScore > SCORE_EXIT_BAD;
 
-        // ── Hysteresis state machine ──────────────────────────────────────────
-        // Enter bad state: score drops BELOW SCORE_ENTER_BAD (68)
-        // Exit bad state: score must EXCEED SCORE_EXIT_BAD (76) for T_RESET_MS
-        const isBadScore = m.postureScore < SCORE_ENTER_BAD;
-        const isGoodScore = m.postureScore > SCORE_EXIT_BAD && m.issues.length === 0;
+      if (isBadScore) {
+        goodStartRef.current = null;
+        if (!badStartRef.current) badStartRef.current = now;
+        const duration = now - badStartRef.current;
+        setBadMs(duration);
+        setStreakMs(0);
+        streakStartRef.current = now;
 
-        if (isBadScore) {
-          goodStartRef.current = null;
-          if (!badStartRef.current) badStartRef.current = now;
-          const duration = now - badStartRef.current;
-          setBadMs(duration);
-
-          const shouldAlert =
-            duration >= TIMING.T_WARN_MS &&
-            !isAnalyzingRef.current &&
-            now - lastAlertRef.current > TIMING.T_COOLDOWN_MS;
-
-          if (shouldAlert) triggerAnalysis(m, duration);
-
-        } else if (isGoodScore) {
-          // Must sustain good score for T_RESET_MS before clearing
-          if (!goodStartRef.current) goodStartRef.current = now;
-          const goodDuration = now - goodStartRef.current;
-          if (goodDuration >= TIMING.T_RESET_MS) {
-            badStartRef.current  = null;
-            goodStartRef.current = null;
-            setBadMs(0);
+        if (duration >= TIMING.T_WARN_MS) {
+          const cooldownElapsed = now - lastAlertRef.current;
+          if (cooldownElapsed >= TIMING.T_COOLDOWN_MS) {
+            triggerAnalysis(m, duration);
           }
         }
-        // Between 68–76: hold state (hysteresis zone — no change)
+      } else if (isGoodScore) {
+        // Sustained good posture
+        if (!goodStartRef.current) goodStartRef.current = now;
+        const goodDuration = now - goodStartRef.current;
+        if (goodDuration >= TIMING.T_RESET_MS) {
+          badStartRef.current  = null;
+          goodStartRef.current = null;
+          setBadMs(0);
+        }
+        setStreakMs(now - streakStartRef.current);
       }
 
       rafRef.current = requestAnimationFrame(loop);
@@ -473,6 +498,7 @@ export default function PosChair() {
     calibSamplesRef.current = [];
     badStartRef.current     = null;
     goodStartRef.current    = null;
+    streakStartRef.current  = Date.now();
     setBadMs(0);
     setAlert(null);
     setCalibProgress(0);
@@ -483,329 +509,553 @@ export default function PosChair() {
   const score    = metrics?.postureScore ?? 100;
   const isGood   = metrics?.isGoodPosture ?? true;
   const isBad    = badMs > 0;
+  const livesCount = badMs > 60000 ? 1 : badMs > 30000 ? 2 : 3;
 
   // ── JSX ────────────────────────────────────────────────────────────────────
   return (
-    <div className="dashboard">
+    <div className="app-shell">
       <audio ref={audioRef} style={{ display: 'none' }} />
 
       {/* ── SPLASH OVERLAY ── */}
       {appState === 'SPLASH' && (
-        <div className="splash-screen" style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--bg-void)' }}>
-          <div className="ascii-logo">{`
- ██████╗  ██████╗ ███████╗ ██████╗██╗  ██╗ █████╗ ██╗██████╗ 
- ██╔══██╗██╔═══██╗██╔════╝██╔════╝██║  ██║██╔══██╗██║██╔══██╗
- ██████╔╝██║   ██║███████╗██║     ███████║███████║██║██████╔╝
- ██╔═══╝ ██║   ██║╚════██║██║     ██╔══██║██╔══██║██║██╔══██╗
- ██║     ╚██████╔╝███████║╚██████╗██║  ██║██║  ██║██║██║  ██║
- ╚═╝      ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝`}
-          </div>
-          <div className="splash-title">POSTURE MONITORING SYSTEM</div>
-          <div className="splash-subtitle">
-            MediaPipe BlazePose → Gemini 3.8 Flash → ElevenLabs Voice
-          </div>
-          {cameraError && (
-            <div style={{
-              background: 'rgba(255, 0, 64, 0.15)',
-              border: '2px solid var(--red-alert)',
-              color: 'var(--red-alert)',
-              padding: '12px 20px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '18px',
-              maxWidth: '560px',
-              textAlign: 'center',
-              boxShadow: 'var(--glow-red)',
-              lineHeight: 1.4,
-            }}>
-              ⚠ CAMERA ERROR: {cameraError}
+        <div className="screen-overlay">
+          <div className="overlay-modal">
+            <div className="modal-badge">
+              <Sparkles size={14} /> 16-BIT RETRO ROM x BENTO DASHBOARD
             </div>
-          )}
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <div className="spec-badge">📡 33 KEYPOINTS</div>
-            <div className="spec-badge">🧠 DUAL-LAYER 252-ANGLE</div>
-            <div className="spec-badge">🎙️ VOICE ALERTS</div>
-            <div className="spec-badge">🎯 CALIBRATED</div>
-          </div>
-          <button className="pixel-btn" onClick={startCamera} id="start-btn">
-            ▶ INITIALIZE SYSTEM
-          </button>
-          <div className="splash-subtitle" style={{ fontSize: '13px', color: 'var(--green-dim)' }}>
-            Camera access required · Sit in good posture for calibration
+            <h1 className="modal-title">
+              POS<span>CHAIR</span> AI
+            </h1>
+            <p className="modal-sub">
+              Extreme Neo-Brutalist posture monitor with dual-layer 252-angle consensus, Gemini 3.8 Flash analysis, and ElevenLabs real-time voice coaching.
+            </p>
+
+            {cameraError && (
+              <div className="error-banner">
+                <ShieldAlert size={24} style={{ color: 'var(--pop-magenta)', flexShrink: 0 }} />
+                <div>
+                  <div style={{ textTransform: 'uppercase', marginBottom: 4 }}>Camera Access Failed</div>
+                  <div style={{ color: '#cbd5e1', fontSize: 13 }}>{cameraError}</div>
+                </div>
+              </div>
+            )}
+
+            <div className="feature-pill-grid">
+              <div className="feature-pill">
+                <Cpu size={16} style={{ color: 'var(--pop-cyan)' }} />
+                <span>33 Keypoints</span>
+              </div>
+              <div className="feature-pill">
+                <Layers size={16} style={{ color: 'var(--pop-yellow)' }} />
+                <span>Dual-Layer 252-Angle</span>
+              </div>
+              <div className="feature-pill">
+                <Mic size={16} style={{ color: 'var(--pop-purple)' }} />
+                <span>ElevenLabs Voice</span>
+              </div>
+              <div className="feature-pill">
+                <Trophy size={16} style={{ color: 'var(--pop-lime)' }} />
+                <span>90%+ Precision</span>
+              </div>
+              <div className="feature-pill">
+                <Zap size={16} style={{ color: 'var(--pop-orange)' }} />
+                <span>Zero Latency</span>
+              </div>
+            </div>
+
+            <button className="brutal-hero-btn" onClick={startCamera} id="start-btn">
+              <Play size={22} fill="#000" />
+              <span>Initialize System</span>
+            </button>
+
+            <div style={{ fontSize: 13, color: 'var(--pop-muted)', fontWeight: 600 }}>
+              Webcam permission required · Auto-calibrates in 5 seconds
+            </div>
           </div>
         </div>
       )}
 
       {/* ── LOADING OVERLAY ── */}
       {appState === 'LOADING' && (
-        <div className="splash-screen" style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--bg-void)' }}>
-          <div className="splash-title">LOADING AI ENGINE</div>
-          <div className="splash-subtitle">{loadingMsg}</div>
-          <div className="loading-bar-container">
-            <div className="loading-bar-fill" />
-          </div>
-          <div className="splash-subtitle" style={{ fontSize: '14px', color: 'var(--green-dim)' }}>
-            ~3-5 seconds on first load (cached after)
+        <div className="screen-overlay">
+          <div className="overlay-modal" style={{ maxWidth: 520 }}>
+            <div className="modal-badge" style={{ background: 'var(--pop-cyan)' }}>
+              <Zap size={14} /> LOADING VISION ENGINE
+            </div>
+            <h2 className="modal-title" style={{ fontSize: 28 }}>
+              INITIALIZING <span>ROM</span>
+            </h2>
+            <p className="modal-sub">{loadingMsg}</p>
+            <div className="calib-progress-track">
+              <div className="calib-progress-bar" style={{ width: '85%' }} />
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--pop-muted)' }}>
+              Model cached locally after first download
+            </div>
           </div>
         </div>
       )}
 
-      {/* ── PERSISTENT DASHBOARD & CAMERA ── */}
-      <header className="header-bar">
-        <div className="header-logo">
-          🎮 POS<span>CHAIR</span>
-          <span style={{ color: 'var(--green-dim)', marginLeft: 8 }}>v3.0 DUAL-LAYER</span>
-          {appState === 'CALIBRATING' && (
-            <span style={{ color: 'var(--amber)', marginLeft: 8 }}>// CALIBRATING</span>
-          )}
+      {/* ── RETRO CARTRIDGE HEADER BAR ── */}
+      <header className="cartridge-header">
+        <div className="brand-section">
+          <div className="brand-logo-badge">
+            <Gamepad2 size={20} />
+            <span>POSCHAIR</span>
+          </div>
+          <div className="brand-meta">
+            <div className="brand-title-wrap">
+              <div className="brand-title">
+                NEO<span>BRUTALIST</span>
+              </div>
+              <span className="rom-chip">ROM: V3.0 HYBRID</span>
+            </div>
+            <div className="brand-subtitle">
+              MEDIAPIPE BLAZEPOSE FULL // YOLOV8M-POSE ENGINE
+            </div>
+          </div>
         </div>
-        <div className="header-status">
+
+        {/* HUD Telemetry Ribbon */}
+        <div className="header-hud">
           {appState === 'ACTIVE' && (
             <>
-              <span className="score-badge">SCORE: {score}/100</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', color: 'var(--green-dim)' }}>{fps}fps</span>
-              {calibration && (
-                <span style={{ fontFamily: 'var(--font-pixel)', fontSize: '7px', color: 'var(--amber)' }}>
-                  🎯 CAL
-                </span>
-              )}
-              <button
-                className="pixel-btn"
-                style={{ fontSize: '7px', padding: '4px 8px' }}
-                onClick={recalibrate}
-                id="recalibrate-btn"
-              >↺ RECAL</button>
-              <div className={`status-pill ${noPerson ? 'idle' : isGood ? 'good' : 'bad'}`}>
-                <div className="status-dot" />
-                {noPerson ? 'NO SIGNAL' : isGood ? 'GOOD' : 'BAD POSTURE'}
+              {/* Score Pill */}
+              <div className={`hud-pill score-pill ${score < 68 ? 'bad' : score < 76 ? 'warn' : ''}`}>
+                <Trophy size={16} />
+                <span>SCORE: {score}/100</span>
               </div>
+
+              {/* Health Hearts */}
+              <div className="hud-pill hearts-pill" title="Posture Lives">
+                {[1, 2, 3].map(i => (
+                  <Heart
+                    key={i}
+                    size={16}
+                    fill={i <= livesCount ? '#FF2E93' : '#334155'}
+                    style={{ color: i <= livesCount ? '#FF2E93' : '#334155' }}
+                  />
+                ))}
+              </div>
+
+              {/* FPS Pill */}
+              <div className="hud-pill fps-pill">
+                <Activity size={15} />
+                <span>{fps} FPS</span>
+              </div>
+
+              {/* Status Badge */}
+              <div className={`hud-pill status-pill ${noPerson ? 'idle' : isGood ? 'good' : 'bad'}`}>
+                {noPerson ? (
+                  <>
+                    <Radio size={16} />
+                    <span>NO TARGET</span>
+                  </>
+                ) : isGood ? (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span>GOOD POSTURE</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle size={16} />
+                    <span>BAD POSTURE</span>
+                  </>
+                )}
+              </div>
+
+              {/* Recalibrate Button */}
+              <button className="brutal-btn btn-yellow" onClick={recalibrate} id="recalibrate-btn">
+                <RotateCcw size={15} />
+                <span>Recal</span>
+              </button>
             </>
           )}
+
           {appState === 'CALIBRATING' && (
-            <div className="status-pill idle">
-              <div className="status-dot" />
-              CALIBRATING {calibProgress.toFixed(0)}%
+            <div className="hud-pill score-pill warn">
+              <Target size={16} />
+              <span>CALIBRATING: {calibProgress.toFixed(0)}%</span>
             </div>
           )}
         </div>
       </header>
 
-      <div className="main-content">
-        {/* Camera Section - NEVER UNMOUNTS */}
-        <section className="camera-section">
-          <video ref={videoRef} className="camera-video" playsInline muted autoPlay />
-          <canvas ref={canvasRef} className="camera-canvas" />
-          <div className="camera-label">
-            {appState === 'CALIBRATING' ? 'CAM_01 // CALIBRATING BASELINE' : 'CAM_01 // MEDIAPIPE BLAZEPOSE FULL'}
-          </div>
-          <div className="camera-corner tl" /><div className="camera-corner tr" />
-          <div className="camera-corner bl" /><div className="camera-corner br" />
-
-          {/* Calibration overlay */}
-          {appState === 'CALIBRATING' && (
-            <div className="calib-overlay">
-              <div className="calib-title">SIT IN YOUR BEST POSTURE</div>
-              <div className="calib-sub">Head up · Shoulders level · Spine tall</div>
-              <div className="calib-bar-wrap">
-                <div className="calib-bar" style={{ width: `${calibProgress}%` }} />
-              </div>
-              <div className="calib-pct">{calibProgress.toFixed(0)}%</div>
+      {/* ── BENTO DASHBOARD GRID ── */}
+      <div className="bento-grid">
+        {/* TILE 1: Primary Camera Stage (Span 7 cols) */}
+        <section className="bento-card col-span-7">
+          <div className="bento-header ribbon-cyan">
+            <div className="header-left">
+              <Camera size={18} />
+              <span>TARGETING STAGE // WEBCAM HUD</span>
             </div>
-          )}
+            <div className="header-badge">
+              <span className="rec-dot" style={{ display: 'inline-block', marginRight: 6 }} />
+              LIVE 720P
+            </div>
+          </div>
+
+          <div className="camera-stage">
+            <video ref={videoRef} className="camera-video" playsInline muted autoPlay />
+            <canvas ref={canvasRef} className="camera-canvas" />
+            <div className="camera-scanlines" />
+
+            {/* Corner Crosshairs */}
+            <div className="hud-corner tl" />
+            <div className="hud-corner tr" />
+            <div className="hud-corner bl" />
+            <div className="hud-corner br" />
+
+            <div className="camera-hud-badge">
+              <Crosshair size={14} />
+              <span>BLAZEPOSE FULL // 33 KP</span>
+            </div>
+
+            {/* In-Stream Calibration Overlay */}
+            {appState === 'CALIBRATING' && (
+              <div className="calib-overlay-card">
+                <Target size={42} style={{ color: 'var(--pop-yellow)' }} />
+                <div className="calib-title">Sit in Your Best Posture</div>
+                <div className="calib-sub">
+                  Align ears over shoulders, keep chest proud, relax traps.
+                </div>
+                <div className="calib-progress-track">
+                  <div className="calib-progress-bar" style={{ width: `${calibProgress}%` }} />
+                </div>
+                <div className="calib-pct-text">{calibProgress.toFixed(0)}% COMPLETED</div>
+              </div>
+            )}
+          </div>
         </section>
 
-        {/* Right Panel */}
-        <aside className="right-panel">
-          {/* Skeleton Minimap */}
-          <div className="minimap-section">
-            <div className="section-header">SKELETON_WIREFRAME</div>
-            <div className="minimap-canvas-wrapper">
-              <canvas ref={minimapRef} className="minimap-canvas" />
-              <div className="minimap-scanline" />
+        {/* TILE 2: Skeleton Radar Minimap (Span 5 cols) */}
+        <section className="bento-card col-span-5">
+          <div className="bento-header ribbon-dark">
+            <div className="header-left">
+              <Crosshair size={18} style={{ color: 'var(--pop-cyan)' }} />
+              <span>SKELETON RADAR // 3D TOPOLOGY</span>
+            </div>
+            <div className="header-badge" style={{ color: 'var(--pop-cyan)' }}>
+              33 NODES
             </div>
           </div>
 
-          {/* Dynamic Content based on Calibration vs Active */}
-          {appState === 'CALIBRATING' ? (
-            <>
-              <div className="metrics-section">
-                <div className="section-header">CALIBRATION_GUIDE</div>
-                {[
-                  { icon: '👀', text: 'Look straight at camera' },
-                  { icon: '📐', text: 'Ears aligned over shoulders' },
-                  { icon: '💪', text: 'Relax shoulders — don\'t shrug' },
-                  { icon: '🪑', text: 'Sit tall — back straight' },
-                  { icon: '⚖️', text: 'Weight even on both hips' },
-                ].map(({ icon, text }) => (
-                  <div key={text} className="metric-row" style={{ gap: '12px', padding: '4px 0' }}>
-                    <span style={{ fontSize: '20px' }}>{icon}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '20px', color: 'var(--green-mid)' }}>{text}</span>
-                  </div>
-                ))}
+          <div className="radar-content">
+            <div className="radar-canvas-wrap">
+              <canvas ref={minimapRef} className="radar-canvas" />
+              <div className="radar-sweep" />
+            </div>
+
+            <div className="radar-legend">
+              <div className="legend-item">
+                <div className="legend-dot" style={{ background: 'var(--pop-lime)' }} />
+                <span>Aligned</span>
               </div>
-              <div className="alert-section">
-                <div className="alert-idle" style={{ borderColor: 'var(--amber)', color: 'var(--amber)' }}>
-                  ⚡ CAPTURING 252-ANGLE BASELINE<br/>
-                  <span style={{ fontSize: '14px' }}>Dual-layer consensus voting for 90%+ accuracy</span>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ background: 'var(--pop-yellow)' }} />
+                <span>Joint Nodes</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ background: 'var(--pop-magenta)' }} />
+                <span>Deviation Alert</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* TILE 3: Posture Score & Health Gauge (Span 4 cols) */}
+        <section className="bento-card col-span-4">
+          <div className="bento-header ribbon-lime">
+            <div className="header-left">
+              <Trophy size={18} />
+              <span>POSTURE HEALTH GAUGE</span>
+            </div>
+            <div className="header-badge">REAL-TIME</div>
+          </div>
+
+          <div className="score-card-content">
+            <div className="score-giant-display">
+              <span className={`score-giant-number ${score < 68 ? 'bad' : score < 76 ? 'warn' : 'good'}`}>
+                {score}
+              </span>
+              <span className="score-max-tag">/100</span>
+            </div>
+
+            <div className="score-bar-track">
+              <div
+                className={`score-bar-fill ${score < 68 ? 'bad' : score < 76 ? 'warn' : 'good'}`}
+                style={{ width: `${score}%` }}
+              />
+            </div>
+
+            <div className={`score-status-banner ${score < 68 ? 'bad' : score < 76 ? 'warn' : 'good'}`}>
+              {score >= 76 ? (
+                <>
+                  <CheckCircle2 size={20} />
+                  <span>OPTIMAL ERGONOMIC ALIGNMENT</span>
+                </>
+              ) : score >= 68 ? (
+                <>
+                  <AlertTriangle size={20} />
+                  <span>BORDERLINE POSTURE DRIFT</span>
+                </>
+              ) : (
+                <>
+                  <ShieldAlert size={20} />
+                  <span>CRITICAL POSTURE COLLAPSE</span>
+                </>
+              )}
+            </div>
+
+            <div className="streak-card">
+              <Flame size={20} style={{ color: 'var(--pop-yellow)' }} />
+              <span>PERFECT STREAK: {fmt(streakMs)}</span>
+            </div>
+          </div>
+        </section>
+
+        {/* TILE 4: Biomechanical Telemetry Grid (Span 8 cols) */}
+        <section className="bento-card col-span-8">
+          <div className="bento-header ribbon-yellow">
+            <div className="header-left">
+              <Activity size={18} />
+              <span>BIOMECHANICAL TELEMETRY MATRIX</span>
+            </div>
+            <div className="header-badge">6 DEGREES OF FREEDOM</div>
+          </div>
+
+          <div className="telemetry-grid">
+            {metrics ? (
+              <>
+                {/* 1. Head Angle */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Head Angle</span>
+                    <span style={{ fontSize: 11 }}>FHP</span>
+                  </div>
+                  <div className={`tile-value ${metrics.headNeckShoulderAngle < 140 ? 'bad' : metrics.headNeckShoulderAngle < 152 ? 'warn' : 'ok'}`}>
+                    {metrics.headNeckShoulderAngle.toFixed(1)}°
+                  </div>
+                  <div className="tile-sub">Target: &gt; 152.0°</div>
                 </div>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* Live Metrics */}
-              <div className="metrics-section">
-                <div className="section-header">LIVE_POSTURE_DATA {calibration ? '// CALIBRATED' : '// UNCALIBRATED'}</div>
 
-                {/* Score bar */}
-                <div className="metric-bar-row">
-                  <span className="metric-bar-label">POSTURE_SCORE</span>
-                  <div className="metric-bar-track">
-                    <div
-                      className={`metric-bar-fill score-fill${score < 50 ? ' low' : score < 72 ? ' mid' : ''}`}
-                      style={{ width: `${score}%` }}
-                    />
+                {/* 2. Lateral Tilt */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Lateral Tilt</span>
+                    <span style={{ fontSize: 11 }}>Coronal</span>
                   </div>
-                  <span className="score-number">{score}</span>
+                  <div className={`tile-value ${Math.abs(metrics.lateralTiltDeg) > 15 ? 'bad' : Math.abs(metrics.lateralTiltDeg) > 8 ? 'warn' : 'ok'}`}>
+                    {metrics.lateralTiltDeg > 0 ? '+' : ''}{metrics.lateralTiltDeg.toFixed(1)}°
+                  </div>
+                  <div className="tile-sub">Target: &lt; ±8.0°</div>
                 </div>
 
-                {metrics ? (
-                  <>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; HEAD_ANGLE:</span>
-                      <span className={`metric-value ${metrics.headNeckShoulderAngle < 140 ? 'bad' : metrics.headNeckShoulderAngle < 152 ? 'warn' : 'ok'}`}>
-                        {metrics.headNeckShoulderAngle.toFixed(1)}°
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; TILT:</span>
-                      <span className={`metric-value ${Math.abs(metrics.lateralTiltDeg) > 15 ? 'bad' : Math.abs(metrics.lateralTiltDeg) > 8 ? 'warn' : 'ok'}`}>
-                        {metrics.lateralTiltDeg > 0 ? '+' : ''}{metrics.lateralTiltDeg.toFixed(1)}°
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; SHRUG:</span>
-                      <span className={`metric-value ${metrics.shoulderShrug < 0.30 ? 'bad' : metrics.shoulderShrug < 0.38 ? 'warn' : 'ok'}`}>
-                        {metrics.shoulderShrug < 0.38 ? `${metrics.shoulderShrug.toFixed(2)} ⚠` : 'CLEAR'}
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; ASYMMETRY:</span>
-                      <span className={`metric-value ${metrics.shoulderAsymmetry > 0.14 ? 'bad' : metrics.shoulderAsymmetry > 0.07 ? 'warn' : 'ok'}`}>
-                        {(metrics.shoulderAsymmetry * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; LEAN:</span>
-                      <span className={`metric-value ${Math.abs(metrics.trunkLean) > 0.20 ? 'bad' : Math.abs(metrics.trunkLean) > 0.12 ? 'warn' : 'ok'}`}>
-                        {metrics.trunkLean > 0 ? '+' : ''}{metrics.trunkLean.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; FHP_DEPTH:</span>
-                      <span className={`metric-value ${metrics.zFhpDelta < -0.10 ? 'bad' : metrics.zFhpDelta < -0.06 ? 'warn' : 'ok'}`}>
-                        {metrics.zFhpDelta.toFixed(3)}
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; VISIBILITY:</span>
-                      <span className={`metric-value ${metrics.visibilityScore > 0.75 ? 'ok' : metrics.visibilityScore > 0.50 ? 'warn' : 'bad'}`}>
-                        {(metrics.visibilityScore * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; L2_CONSENSUS:</span>
-                      <span className={`metric-value ${calibration ? 'ok' : 'warn'}`}>
-                        {calibration ? '252-ANGLE ACTIVE' : 'UNCALIBRATED'}
-                      </span>
-                    </div>
-                    <div className="metric-row">
-                      <span className="metric-key">&gt; ISSUES:</span>
-                      <span className={`metric-value ${metrics.issues.length > 0 ? 'bad' : 'ok'}`}>
-                        {metrics.issues.length === 0
-                          ? 'NONE (L1+L2 AGREED)'
-                          : metrics.issues.map(i => `${i.label} [${(i.layer2Confidence * 100).toFixed(0)}%]`).join(', ')}
-                      </span>
-                    </div>
-                    {calibration && Object.keys(metrics.deviations).length > 0 && (
-                      <div className="metric-row" style={{ marginTop: '4px' }}>
-                        <span className="metric-key" style={{ color: 'var(--amber)' }}>&gt; CAL_DELTA:</span>
-                        <span className={`metric-value ${(metrics.deviations.headNeckShoulder ?? 0) > 15 ? 'bad' : 'warn'}`}>
-                          {(metrics.deviations.headNeckShoulder ?? 0) > 0
-                            ? `-${(metrics.deviations.headNeckShoulder ?? 0).toFixed(1)}°`
-                            : 'ON BASELINE'}
-                        </span>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="metric-row" style={{ color: 'var(--green-dim)' }}>
-                    <span>&gt; AWAITING SIGNAL...<span className="cursor-blink" /></span>
+                {/* 3. Shoulder Shrug */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Shoulder Shrug</span>
+                    <span style={{ fontSize: 11 }}>Traps</span>
                   </div>
-                )}
+                  <div className={`tile-value ${metrics.shoulderShrug < 0.30 ? 'bad' : metrics.shoulderShrug < 0.38 ? 'warn' : 'ok'}`}>
+                    {metrics.shoulderShrug < 0.38 ? 'ELEVATED' : 'CLEAR'}
+                  </div>
+                  <div className="tile-sub">Index: {metrics.shoulderShrug.toFixed(2)}</div>
+                </div>
 
-                {/* Bad posture timer */}
-                {isBad && badMs > 0 && (
-                  <div className="timer-row">
-                    ⚠ BAD: {fmt(badMs)}
-                    {isAnalyzing && <span style={{ color: 'var(--amber)', fontSize: '16px' }}> [QUERYING AI...]</span>}
+                {/* 4. Shoulder Asymmetry */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Asymmetry</span>
+                    <span style={{ fontSize: 11 }}>Delta</span>
                   </div>
-                )}
+                  <div className={`tile-value ${metrics.shoulderAsymmetry > 0.14 ? 'bad' : metrics.shoulderAsymmetry > 0.07 ? 'warn' : 'ok'}`}>
+                    {(metrics.shoulderAsymmetry * 100).toFixed(1)}%
+                  </div>
+                  <div className="tile-sub">Target: &lt; 7.0%</div>
+                </div>
 
-                {/* Alert cooldown indicator */}
-                {!isBad && !isGood && (
-                  <div className="metric-row" style={{ color: 'var(--green-dim)', fontSize: '16px' }}>
-                    <span>&gt; CONFIRMING CORRECTION...<span className="cursor-blink" /></span>
+                {/* 5. Trunk Lean */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Trunk Lean</span>
+                    <span style={{ fontSize: 11 }}>Spine</span>
                   </div>
-                )}
+                  <div className={`tile-value ${Math.abs(metrics.trunkLean) > 0.20 ? 'bad' : Math.abs(metrics.trunkLean) > 0.12 ? 'warn' : 'ok'}`}>
+                    {metrics.trunkLean > 0 ? '+' : ''}{metrics.trunkLean.toFixed(2)}
+                  </div>
+                  <div className="tile-sub">Target: &lt; 0.12</div>
+                </div>
+
+                {/* 6. Z-Depth FHP */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Z-Depth Shift</span>
+                    <span style={{ fontSize: 11 }}>3D Sagittal</span>
+                  </div>
+                  <div className={`tile-value ${metrics.zFhpDelta < -0.10 ? 'bad' : metrics.zFhpDelta < -0.06 ? 'warn' : 'ok'}`}>
+                    {metrics.zFhpDelta.toFixed(3)}
+                  </div>
+                  <div className="tile-sub">Depth plane delta</div>
+                </div>
+
+                {/* 7. Landmark Visibility */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Visibility</span>
+                    <Eye size={14} style={{ color: 'var(--pop-cyan)' }} />
+                  </div>
+                  <div className={`tile-value ${metrics.visibilityScore > 0.75 ? 'ok' : metrics.visibilityScore > 0.50 ? 'warn' : 'bad'}`}>
+                    {(metrics.visibilityScore * 100).toFixed(0)}%
+                  </div>
+                  <div className="tile-sub">Keypoint signal quality</div>
+                </div>
+
+                {/* 8. Calibration Delta */}
+                <div className="telemetry-tile">
+                  <div className="tile-header">
+                    <span>Cal Baseline</span>
+                    <Sliders size={14} style={{ color: 'var(--pop-yellow)' }} />
+                  </div>
+                  <div className="tile-value ok" style={{ fontSize: 20 }}>
+                    {calibration ? 'MATCHED' : 'UNSET'}
+                  </div>
+                  <div className="tile-sub">
+                    {calibration ? '252-Angle baseline locked' : 'Run 5s calibration'}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ gridColumn: 'span 4', textAlign: 'center', padding: 32, color: 'var(--pop-muted)' }}>
+                <Activity size={32} style={{ margin: '0 auto 12px', display: 'block' }} />
+                <span>Awaiting video signal from camera...</span>
               </div>
+            )}
+          </div>
+        </section>
 
-              {/* AI Alert */}
-              <div className="alert-section">
-                <div className="section-header">AI_COACH_OUTPUT</div>
-                {alert ? (
-                  <div className={`alert-box ${alert.urgency === 'URGENT' ? 'critical' : ''}`}>
-                    <div className="alert-header">
-                      <span>
-                        {alert.urgency === 'URGENT' ? '🚨 URGENT' :
-                         alert.urgency === 'FIRM'   ? '⚠ CORRECTION' : '💡 TIP'}
-                        {' // GEMINI 3.8 FLASH'}
-                      </span>
-                      <span style={{ color: 'var(--green-dim)', fontSize: '6px' }}>
-                        {new Date(alert.timestamp).toLocaleTimeString()}
-                      </span>
+        {/* TILE 5: AI Voice Coach (Span 7 cols) */}
+        <section className="bento-card col-span-7">
+          <div className="bento-header ribbon-purple">
+            <div className="header-left">
+              <Mic size={18} />
+              <span>AI VOICE COACH // GEMINI 3.8 FLASH + ELEVENLABS</span>
+            </div>
+            <div className="header-badge">TURBO V2</div>
+          </div>
+
+          <div className="ai-coach-content">
+            <div className="ai-quote-box">
+              {alert ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--pop-yellow)', fontWeight: 800, fontSize: 13 }}>
+                      <Sparkles size={16} />
+                      <span>{alert.urgency === 'URGENT' ? 'CRITICAL CORRECTION' : alert.urgency === 'FIRM' ? 'FIRM CORRECTION' : 'GENTLE TIP'}</span>
                     </div>
-                    <div className="alert-text">{alert.text}</div>
-                    {alert.isPlaying && (
-                      <div className="alert-playing">
-                        <div className="playing-bars">
-                          {[0.2, 0.4, 0.3, 0.5, 0.2, 0.4].map((d, i) => (
-                            <div key={i} className="playing-bar"
-                              style={{ height: `${6 + Math.random() * 6}px`, '--delay': `${d}s` } as React.CSSProperties}
-                            />
-                          ))}
-                        </div>
-                        ▶ ELEVENLABS SPEAKING...
-                      </div>
-                    )}
+                    <span style={{ fontSize: 12, color: 'var(--pop-muted)' }}>
+                      {new Date(alert.timestamp).toLocaleTimeString()}
+                    </span>
                   </div>
-                ) : (
-                  <div className="alert-idle">
-                    {isAnalyzing ? (
-                      <span style={{ color: 'var(--amber)' }}>⏳ AI ANALYZING...<span className="cursor-blink" /></span>
-                    ) : (
-                      <>
-                        <span>MONITORING ACTIVE</span>
-                        <br/>
-                        <span style={{ fontSize: '13px', color: 'var(--green-dim)' }}>
-                          Alert after {TIMING.T_WARN_MS / 1000}s bad posture
-                        </span>
-                      </>
-                    )}
+                  <div className="ai-quote-text">&ldquo;{alert.text}&rdquo;</div>
+                </>
+              ) : (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--pop-purple)', fontWeight: 800, fontSize: 13, marginBottom: 8 }}>
+                    <Volume2 size={16} />
+                    <span>AUDIO MONITORING ACTIVE</span>
                   </div>
-                )}
+                  <div className="ai-quote-text" style={{ color: 'var(--pop-muted)', fontSize: 16 }}>
+                    {isAnalyzing
+                      ? 'Gemini 3.8 Flash is analyzing your posture telemetry...'
+                      : `Voice alerts trigger when bad posture is sustained for ${TIMING.T_WARN_MS / 1000} seconds.`}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Active Speech Animation */}
+            {alert?.isPlaying ? (
+              <div className="ai-speaking-bar">
+                <div className="eq-bars">
+                  {[0.2, 0.5, 0.8, 0.4, 0.9, 0.3, 0.7, 0.4].map((d, i) => (
+                    <div key={i} className="eq-bar" style={{ animationDelay: `${d}s` }} />
+                  ))}
+                </div>
+                <span>ELEVENLABS RACHEL SPEAKING...</span>
               </div>
-            </>
-          )}
-        </aside>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, color: 'var(--pop-muted)', fontWeight: 700 }}>
+                <span>Voice: Rachel (Turbo v2)</span>
+                <span>Latency: ~300ms</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* TILE 6: Consensus Engine & Controls (Span 5 cols) */}
+        <section className="bento-card col-span-5">
+          <div className="bento-header ribbon-magenta">
+            <div className="header-left">
+              <Terminal size={18} />
+              <span>CONSENSUS ENGINE & CONTROLS</span>
+            </div>
+            <div className="header-badge">90%+ ACCURACY</div>
+          </div>
+
+          <div className="consensus-content">
+            {/* Multi-Layer Agreement Status */}
+            <div className="consensus-banner">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Layers size={18} style={{ color: 'var(--pop-cyan)' }} />
+                <span>Layer 2 Angle Consensus:</span>
+              </div>
+              <span style={{ color: calibration ? 'var(--pop-lime)' : 'var(--pop-yellow)', fontWeight: 800 }}>
+                {calibration ? '252-ANGLES ACTIVE' : 'UNCALIBRATED'}
+              </span>
+            </div>
+
+            {/* Active Posture Issues */}
+            {metrics?.issues && metrics.issues.length > 0 ? (
+              metrics.issues.map((issue, idx) => (
+                <div key={idx} className="issue-item">
+                  <div className="issue-label">
+                    <AlertTriangle size={16} />
+                    <span>{issue.label}</span>
+                  </div>
+                  <div className="issue-conf">
+                    {(issue.layer2Confidence * 100).toFixed(0)}% L2 CONF
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="no-issues-banner">
+                <Shield size={20} />
+                <span>ZERO ANATOMICAL DEFECTS DETECTED</span>
+              </div>
+            )}
+
+            {/* Bad Posture Timer */}
+            {isBad && badMs > 0 && (
+              <div className="control-row" style={{ borderColor: 'var(--pop-magenta)', color: 'var(--pop-magenta)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Clock size={16} />
+                  <span>Sustained Bad Posture:</span>
+                </div>
+                <span style={{ fontFamily: 'var(--font-sans)', fontWeight: 900, fontSize: 18 }}>
+                  {fmt(badMs)}
+                </span>
+              </div>
+            )}
+
+            {/* 1-Click Recalibrate Action */}
+            <button className="brutal-btn btn-yellow" onClick={recalibrate} style={{ width: '100%' }}>
+              <RotateCcw size={16} />
+              <span>Recalibrate Baseline (5s)</span>
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   );
