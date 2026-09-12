@@ -102,6 +102,8 @@ export interface PostureIssue {
   layer2Confidence: number; // 0–1, from consensus vote
   value: number;
   label: string;
+  problemName: string;
+  fixAction: string;
   description: string;
   correctionHint: string;
 }
@@ -694,6 +696,8 @@ export function analyzePosture(
       layer2Confidence: consensusVotes['FORWARD_HEAD'] ?? 0.5,
       value: antDelta,
       label: fhpLabel,
+      problemName: 'Forward head crane',
+      fixAction: 'Draw your chin back and align your ears over your shoulders.',
       description: fhpDesc,
       correctionHint: 'Draw your chin back and align your ears over your shoulders.',
     });
@@ -703,14 +707,17 @@ export function analyzePosture(
   const tiltThreshMild = calibration ? Math.abs(calibration.lateralTiltDelta) + 8 : 8;
   const absTilt = Math.abs(tilt);
   if (absTilt > tiltThreshMild && shouldFlag('LATERAL_TILT')) {
+    const isRight = tilt > 0;
     issues.push({
       type: 'LATERAL_TILT',
       severity: absTilt > tiltThreshMild + 15 ? 'SEVERE' : absTilt > tiltThreshMild + 7 ? 'MODERATE' : 'MILD',
       layer2Confidence: consensusVotes['LATERAL_TILT'] ?? 0.5,
       value: tilt,
       label: `TILT: ${tilt > 0 ? '+' : ''}${tilt.toFixed(1)}°`,
-      description: `Head tilted ${tilt > 0 ? 'right' : 'left'} by ${absTilt.toFixed(1)}°`,
-      correctionHint: `Level your head — ${tilt > 0 ? 'right' : 'left'} ear is tilted downward.`,
+      problemName: `Head tilt to the ${isRight ? 'right' : 'left'}`,
+      fixAction: 'Keep your neck straight and level your head.',
+      description: `Head tilted ${isRight ? 'right' : 'left'} by ${absTilt.toFixed(1)}°`,
+      correctionHint: `Level your head — ${isRight ? 'right' : 'left'} ear is tilted downward.`,
     });
   }
 
@@ -723,6 +730,8 @@ export function analyzePosture(
       layer2Confidence: consensusVotes['SHOULDER_SHRUG'] ?? 0.5,
       value: shrug,
       label: `SHRUG: ${shrug.toFixed(2)}`,
+      problemName: 'Elevated shoulders',
+      fixAction: 'Drop your shoulders away from your ears and relax your traps.',
       description: 'Shoulders elevated toward ears (stress shrug)',
       correctionHint: 'Drop your shoulders away from your ears. Relax your traps.',
     });
@@ -737,6 +746,8 @@ export function analyzePosture(
       layer2Confidence: consensusVotes['SHOULDER_ASYMMETRY'] ?? 0.5,
       value: asym,
       label: `ASYM: ${(asym * 100).toFixed(1)}%`,
+      problemName: 'Uneven shoulders',
+      fixAction: 'Level your shoulders to equal height.',
       description: 'Shoulder line tilted unevenly',
       correctionHint: 'Level your shoulders — keep them at equal height.',
     });
@@ -746,13 +757,16 @@ export function analyzePosture(
   const absLean = Math.abs(lean);
   const leanThreshMild = calibration ? Math.abs(calibration.trunkLean) + 0.10 : 0.12;
   if (absLean > leanThreshMild && shouldFlag('TRUNK_LEAN')) {
+    const isRight = lean > 0;
     issues.push({
       type: 'TRUNK_LEAN',
       severity: absLean > leanThreshMild + 0.08 ? 'SEVERE' : 'MODERATE',
       layer2Confidence: consensusVotes['TRUNK_LEAN'] ?? 0.5,
       value: lean,
       label: `LEAN: ${lean > 0 ? '+' : ''}${lean.toFixed(2)}`,
-      description: `Torso leaning ${lean > 0 ? 'right' : 'left'}`,
+      problemName: `Torso leaning to the ${isRight ? 'right' : 'left'}`,
+      fixAction: 'Sit tall and center your weight evenly on both hips.',
+      description: `Torso leaning ${isRight ? 'right' : 'left'}`,
       correctionHint: 'Sit tall and centered with even weight on both hips.',
     });
   }
@@ -833,21 +847,25 @@ export function getUrgencyLevel(ms: number): 'GENTLE' | 'FIRM' | 'URGENT' {
 export function buildAnalysisPrompt(
   m: PostureMetrics, urgency: string, badMs: number
 ): string {
-  const topIssue  = m.issues[0];
-  const allIssues = m.issues.map(i => `${i.type}: ${i.description} [${i.severity}, L2=${(i.layer2Confidence*100).toFixed(0)}%]`).join('; ');
-  const durStr    = badMs >= 60_000
-    ? `${Math.floor(badMs/60000)}m ${Math.floor((badMs%60000)/1000)}s`
-    : `${Math.floor(badMs/1000)}s`;
-  const toneGuide = urgency === 'URGENT' ? 'Be direct and firm.'
-    : urgency === 'FIRM' ? 'Be clear and specific.' : 'Be gentle and encouraging.';
+  const topIssue = m.issues[0];
+  const problemName = topIssue?.problemName || 'Poor posture detected';
+  const fixAction = topIssue?.fixAction || 'Sit upright and align your spine.';
+  const durStr = badMs >= 60_000
+    ? `${Math.floor(badMs / 60000)}m ${Math.floor((badMs % 60000) / 1000)}s`
+    : `${Math.floor(badMs / 1000)}s`;
 
-  return `You are PosChair, an AI posture coach for desk workers. Poor posture detected for ${durStr}.
-Camera View: ${m.cameraView.label} (${m.cameraView.dominantSide} dominant)
-Issues: ${allIssues || 'general poor posture'}
-Top correction: ${topIssue?.correctionHint || 'Sit up straight, ears over shoulders.'}
-Posture score: ${m.postureScore}/100 | Visibility: ${(m.visibilityScore*100).toFixed(0)}%
-Tone: ${toneGuide}
-Write ONE actionable voice correction in 1–2 short sentences (max 25 words). Address the #1 issue by body part. No filler. Sound human.`;
+  return `You are PosChair, an AI posture voice coach. Poor posture detected for ${durStr}.
+
+DIAGNOSED PROBLEM: ${problemName}
+PHYSICAL FIX ACTION: ${fixAction}
+
+MANDATORY RESPONSE FORMAT:
+You MUST speak in exactly two parts:
+Part 1 (The Problem): State the exact diagnosed problem (e.g. "${problemName}.").
+Part 2 (The Fix): Tell the user how to fix it immediately (e.g. "${fixAction}").
+
+Total length must be under 16 words. Never include filler words like "Hey", "Oops", "I noticed", or "Please".
+Exact Output Format: "${problemName}. ${fixAction}"`;
 }
 
 export function resetSmoothers() {

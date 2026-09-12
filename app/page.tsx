@@ -226,7 +226,7 @@ export default function PosChair() {
         fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt }),
+          body: JSON.stringify({ prompt, topIssue: m.issues[0] }),
         }),
       ]);
 

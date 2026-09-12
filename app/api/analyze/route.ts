@@ -5,40 +5,44 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY!);
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt } = await req.json();
-    
-    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
+    const { prompt, topIssue } = await req.json();
+
+    const problemName = topIssue?.problemName || 'Poor posture detected';
+    const fixAction   = topIssue?.fixAction   || 'Sit tall, align your spine, and relax your shoulders.';
+    const defaultCue  = `${problemName}. ${fixAction}`;
+
+    const modelsToTry = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-latest'];
     let text = '';
-    let lastErr: unknown = null;
 
     for (const mName of modelsToTry) {
       try {
         const model = genAI.getGenerativeModel({
           model: mName,
+          systemInstruction:
+            "You are PosChair, an AI voice posture coach. Always deliver speech in exactly two sentences: FIRST state the detected problem clearly, THEN state the physical fix action. Example: Head tilt detected. Keep your neck straight and level your head. Both the problem and the fix must always be included. Keep under 20 words.",
           generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 80,
+            temperature: 0.2,
+            maxOutputTokens: 70,
           },
         });
         const result = await model.generateContent(prompt);
         text = result.response.text().trim();
-        if (text) break;
+        text = text.replace(/^["']|["']$/g, '').trim();
+        if (text && text.split(' ').length >= 4) break;
       } catch (err) {
-        lastErr = err;
-        console.warn(`Gemini model ${mName} unavailable, trying next...`);
+        console.warn(`Gemini model ${mName} unavailable:`, err);
       }
     }
 
-    if (!text) {
-      // Fallback deterministic biomechanical coaching cue
-      text = "Roll your shoulders back, draw your chin gently inward, and align your ears over your shoulders.";
+    if (!text || text.split(' ').length < 4) {
+      text = defaultCue;
     }
-    
+
     return NextResponse.json({ correction: text });
   } catch (error) {
     console.error('Gemini API error:', error);
     return NextResponse.json({
-      correction: "Sit tall, pull your chin back, and relax your shoulders away from your ears."
+      correction: 'Poor posture detected. Sit tall and align your spine.',
     });
   }
 }
