@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "server:heavy": "python server/heavy_pose_server.py",
+    "tunnel": "cloudflared tunnel --url http://localhost:8000"
   },
   "dependencies": {
     "next": "14.2.5",

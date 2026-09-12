@@ -118,26 +118,31 @@ MediaPipe BlazePose runs **entirely in the browser** as a WebAssembly binary —
 
 ---
 
-### Stage 2: Posture Analysis Engine (`lib/posture.ts`)
+### Stage 2: Posture Analysis Engine (`lib/posture.ts`) — Dual-Layer v3.0 Architecture
 
-#### 2a. Calibration (Research-Backed, Non-Negotiable)
+#### 2a. 5-Second Neutral Baseline Calibration
 
-Before monitoring starts, the user sits in their best posture for **3 seconds**. During this time, ~90 frames are sampled and averaged to create a **personal neutral baseline**:
+Before monitoring starts, the user sits in their best posture for **5 seconds** (~150 frames). PosChair averages both 1D biomechanical metrics and an exhaustive 252-angle geometric manifold:
 
-```
+```typescript
 calibration = {
-  headNeckShoulderAngle: 161.4°,  // YOUR good posture angle
-  lateralTiltDelta: 0.8°,         // YOUR natural slight tilt
-  earToShoulderRatio: 0.52,       // YOUR neck length normalized
-  shoulderAsymmetry: 0.021,       // YOUR natural shoulder offset
-  trunkLean: 0.04,                // YOUR natural sitting lean
-  zFhpDelta: -0.012               // YOUR head-to-shoulder depth
+  // Layer 1 Biomechanical Baseline
+  headNeckShoulderAngle: 161.4°,  // YOUR natural good posture angle
+  lateralTiltDelta: 0.8°,         // YOUR natural head-to-shoulder tilt
+  earToShoulderRatio: 0.52,       // YOUR neck length ratio
+  shoulderAsymmetry: 0.021,       // YOUR natural shoulder height variance
+  trunkLean: 0.04,                // YOUR baseline sitting lean
+  zFhpDelta: -0.012,              // YOUR baseline ear-to-shoulder depth
+  // Layer 2 High-Dimensional Geometric Manifold
+  featureAngles: [161.4, 88.2, 45.1, ...], // 252-angle triplet baseline
+  meanVisibility: 0.94,
+  capturedAt: 1726123456789
 }
 ```
 
-All alert thresholds are then computed **relative to this baseline** — not global fixed numbers. This alone accounts for camera placement variation, body proportions, and natural postural variation between individuals.
+All alert thresholds are evaluated **relative to your baseline**, compensating for webcam elevation, body morphology, and chair ergonomics.
 
-> **Research validation**: The ALIGN Framework (2026) showed fixed thresholds gave ~82% accuracy. Personalized calibration pushed it to **98.74%**. That's a 17% accuracy improvement from calibration alone.
+> **Research validation**: The ALIGN Framework (2026) demonstrated that static fixed thresholds achieve only ~82% accuracy. Personalized calibration achieved **98.74%**. Capturing a 252-angle baseline ensures Layer 2 consensus voting operates against an individualized geometric truth.
 
 ---
 
@@ -253,7 +258,36 @@ Different metrics use different window sizes:
 
 ---
 
-#### 2d. Posture Score
+#### 2d. Layer 2: 252-Angle Feature Consensus Voting (PosePilot Methodology)
+
+To reach and exceed **90% classification accuracy** without requiring cumbersome user-labeled datasets, PosChair implements an exhaustive geometric consensus voting layer:
+
+1. **Key Landmark Subset**: 9 upper-body landmarks (`Nose, Left Ear, Right Ear, Left Shoulder, Right Shoulder, Left Elbow, Right Elbow, Left Hip, Right Hip`).
+2. **Angle Triplet Computation**: $C(9,3) \times 3 = 252$ unique angle triplets $(A, V, C)$ computed at module initialization.
+3. **Anatomical Sensitivity Mapping**: Each triplet is pre-indexed to the anatomical defects it is physically sensitive to (e.g., Ear-Shoulder-Hip angles indicate Forward Head; shoulder-elbow angles indicate shrug/asymmetry).
+4. **Deviation Voting**:
+   - Every frame, all 252 angles are compared against the user's calibrated baseline vector.
+   - An angle triplet votes as "deviated" if $|\theta - \theta_{\text{cal}}| > 9.0^\circ$.
+   - **Dual-Layer Gate**:
+     - $\ge 25\%$ deviated $\rightarrow$ **CONFIRMED** (both Layer 1 and Layer 2 agree, confidence $\ge 0.85$).
+     - $< 10\%$ deviated $\rightarrow$ **SUPPRESSED** (flagged as Layer 1 false positive, e.g. momentary head scratch or glance).
+     - $10\% - 25\% \rightarrow$ Deferred to Layer 1.
+
+---
+
+#### 2e. Landmark Visibility Weighting & Hysteresis State Machine
+
+- **Landmark Visibility Weighting**: When lighting is poor or keypoints are partially occluded by hair or desk edge, MediaPipe's keypoint `visibility` drops. The posture score dynamically incorporates visibility:
+  $$\text{effective\_score} = \text{score} \times (0.7 + 0.3 \times \text{visibility})$$
+  Ambiguous, noisy frames cannot trigger false penalties.
+- **Dual-Threshold Hysteresis**:
+  - `SCORE_ENTER_BAD = 68`: PosChair only transitions into the bad posture state when the score drops below 68.
+  - `SCORE_EXIT_BAD = 76`: PosChair only returns to good posture when the score climbs above 76.
+  - This 8-point deadband eliminates threshold boundary flickering.
+
+---
+
+#### 2f. Posture Score
 
 Weighted penalty system, 0–100:
 
@@ -266,7 +300,7 @@ score = 100
        - Asymmetry penalty    (max 15pts)
        - Lean penalty         (max 10pts)
 
-Good posture:  score ≥ 72, zero issues
+Good posture:  score ≥ 76 (exit bad), or score ≥ 68 (enter bad threshold)
 ```
 
 ---
@@ -366,37 +400,65 @@ The audio bytes stream back as `audio/mpeg`, get wrapped in a Blob URL, and are 
 
 ## Architecture Overview
 
-```
+`
 ┌─────────────────────────────────────────────────────────────────┐
 │                        BROWSER (Client)                         │
 │                                                                 │
 │  Webcam → <video> → MediaPipe WASM → 33 Landmarks              │
 │                                ↓                                │
-│                       PostureEngine (lib/posture.ts)            │
-│                       ├── calibration baseline                  │
-│                       ├── 3-point angle formula                 │
-│                       ├── Z-depth FHP detection                 │
-│                       ├── rolling window smoother               │
-│                       └── state machine (T_warn/T_reset)        │
+│                   Dual-Layer Engine (lib/posture.ts)            │
+│                   ├── Layer 1: 6 Biomechanical Metrics         │
+│                   ├── Layer 2: 252-Angle Consensus Voting       │
+│                   ├── Visibility-Weighted Scoring               │
+│                   ├── Rolling Temporal Smoothers                │
+│                   └── Hysteresis State Machine (68 / 76)        │
 │                                ↓                                │
-│              score < 72 for > 30s → API calls                  │
-└─────────────────────────────────────────────────────────────────┘
-                               ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                    NEXT.JS API ROUTES (Server)                  │
-│                                                                 │
-│  /api/analyze → Gemini 3.8 Flash → correction text             │
-│  /api/speak   → ElevenLabs Turbo v2 → audio/mpeg stream        │
-└─────────────────────────────────────────────────────────────────┘
-                               ↓
+│              score < 68 for > 30s → API calls                  │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+        ┌───────────────────────┴────────────────────────┐
+        ▼                                                ▼
+┌──────────────────────────────────────┐ ┌──────────────────────────────────────┐
+│       NEXT.JS API ROUTES (Cloud)     │ │   HEAVY LOCAL MODEL VIA CLOUDFLARE   │
+│                                      │ │                                      │
+│  /api/analyze → Gemini 3.8 Flash     │ │  /api/heavy-pose → Cloudflare Tunnel │
+│  /api/speak   → ElevenLabs Turbo v2  │ │        ↓                             │
+│                                      │ │  Python FastAPI (Local Laptop GPU)   │
+│                                      │ │  YOLOv8m-Pose (Heavy Precision)      │
+└──────────────────────────────────────┘ └──────────────────────────────────────┘
+                                │
+                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                           BROWSER                               │
 │                                                                 │
 │  Audio plays → popup appears → user corrects posture           │
 └─────────────────────────────────────────────────────────────────┘
-```
+`
 
-**No pose data ever leaves the device.** Only the correction text + audio hit external APIs.
+**No pose data ever leaves your control.** High-speed inference runs locally in the browser or on your private laptop.
+
+---
+
+## Heavy Pose Engine via Cloudflare Tunnel (Desktop-Grade Accuracy)
+
+For users who want the absolute maximum accuracy (e.g. overcoming low light, baggy clothing, or partial occlusion), PosChair includes a **Heavy Pose Engine** powered by **YOLOv8m-Pose**:
+
+- **Local Model**: Runs on your laptop using PyTorch / CUDA.
+- **Cloudflare Tunnel**: cloudflared tunnel --url http://localhost:8000 assigns a secure HTTPS address.
+- **Vercel-Compatible**: Even when PosChair is deployed on Vercel, it connects back to your local laptop through the tunnel URL specified in HEAVY_MODEL_URL.
+- **Zero Cloud GPU Costs**: You get server-grade deep learning without paying for GPU servers!
+
+### How to Run:
+`powershell
+# 1. Start Python Heavy Model Server (port 8000)
+npm run server:heavy
+
+# 2. In a second terminal, start Cloudflare Tunnel
+npm run tunnel
+
+# 3. Add the generated https://*.trycloudflare.com URL to .env.local or Vercel:
+# HEAVY_MODEL_URL=https://<tunnel-id>.trycloudflare.com
+`
 
 ---
 
@@ -421,21 +483,25 @@ The audio bytes stream back as `audio/mpeg`, get wrapped in a Blob URL, and are 
 poschair/
 ├── app/
 │   ├── api/
-│   │   ├── analyze/route.ts    # Gemini API → correction text
-│   │   └── speak/route.ts      # ElevenLabs API → audio stream
-│   ├── globals.css             # Complete 8-bit design system
-│   ├── layout.tsx              # Root layout + Google Fonts
-│   └── page.tsx                # Main dashboard (camera, UI, state machine)
+│   │   ├── analyze/route.ts       # Gemini API → correction text
+│   │   ├── speak/route.ts         # ElevenLabs API → audio stream
+│   │   └── heavy-pose/route.ts    # Proxies frames to Cloudflare Tunnel / Python server
+│   ├── globals.css                # Complete 8-bit design system
+│   ├── layout.tsx                 # Root layout + Google Fonts
+│   └── page.tsx                   # Main dashboard (v3.0 dual-layer UI & state machine)
 ├── lib/
-│   └── posture.ts              # Core posture engine
-│       ├── angle3pt()          # 3-point dot-product angle formula
-│       ├── RollingAverage      # Temporal smoother class
-│       ├── sampleCalibrationFrame()
-│       ├── captureCalibration()
-│       ├── extractRawMetrics()
-│       ├── analyzePosture()
-│       └── buildAnalysisPrompt()
-├── .env.local                  # API keys (gitignored)
+│   └── posture.ts                 # Dual-layer posture engine (v3.0)
+│       ├── Layer 1: 6 biomechanical smoothed metrics
+│       ├── Layer 2: 252-angle consensus voting
+│       ├── Visibility-weighted score calculation
+│       ├── Hysteresis thresholds (68 enter / 76 exit)
+│       └── 5-second calibration with 252-angle baseline
+├── server/
+│   ├── heavy_pose_server.py       # FastAPI YOLOv8m-pose server
+│   ├── start_server.ps1           # Startup script for Python server
+│   ├── start_tunnel.ps1           # Startup script for Cloudflare Tunnel
+│   └── README.md                  # Heavy model & tunnel instructions
+├── .env.local                     # API keys (gitignored)
 ├── .gitignore
 ├── next.config.js
 ├── package.json

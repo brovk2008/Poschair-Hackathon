@@ -33,3 +33,6 @@ logs/
 # Cache
 .cache/
 .parcel-cache/
+__pycache__/
+*.pt
+*.onnx
