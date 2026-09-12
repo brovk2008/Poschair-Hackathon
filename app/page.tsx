@@ -5,72 +5,83 @@ import {
   analyzePosture,
   buildAnalysisPrompt,
   getUrgencyLevel,
+  sampleCalibrationFrame,
+  captureCalibration,
+  resetSmoothers,
+  TIMING,
   type PostureMetrics,
   type PoseLandmark,
+  type CalibrationBaseline,
+  LM,
 } from '@/lib/posture';
 
-// MediaPipe connection pairs for skeleton drawing
-const POSE_CONNECTIONS = [
-  [7, 8],   // ear-ear
-  [7, 11],  [8, 12],  // ear-shoulder
+// MediaPipe skeleton connections (upper body focused)
+const POSE_CONNECTIONS: [number, number][] = [
+  [7, 8],   // ear–ear
+  [7, 11],  [8, 12],  // ears–shoulders
   [11, 12], // shoulders
   [11, 13], [13, 15], // left arm
   [12, 14], [14, 16], // right arm
-  [11, 23], [12, 24], // shoulders-hips
+  [11, 23], [12, 24], // shoulders–hips
   [23, 24], // hips
 ];
 
-type AppState = 'SPLASH' | 'LOADING' | 'ACTIVE' | 'NO_PERSON';
+type AppState = 'SPLASH' | 'LOADING' | 'CALIBRATING' | 'ACTIVE';
 
 interface AlertData {
   text: string;
   urgency: 'GENTLE' | 'FIRM' | 'URGENT';
   isPlaying: boolean;
+  timestamp: number;
 }
 
-export default function PosChair() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);       // main camera
-  const minimapRef = useRef<HTMLCanvasElement>(null);       // skeleton minimap
-  const streamRef = useRef<MediaStream | null>(null);
-  const poseLandmarkerRef = useRef<any>(null);
-  const rafRef = useRef<number>(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+// ── Posture timer state machine ───────────────────────────────────────────────
+// T_WARN: 30s bad → alert
+// T_RESET: 5s good → clear bad timer (prevents false resets on minor frame)
+// T_COOLDOWN: 60s between alerts
 
-  const [appState, setAppState] = useState<AppState>('SPLASH');
+export default function PosChair() {
+  const videoRef    = useRef<HTMLVideoElement>(null);
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const minimapRef  = useRef<HTMLCanvasElement>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
+  const landmarkerRef = useRef<any>(null);
+  const rafRef      = useRef<number>(0);
+  const audioRef    = useRef<HTMLAudioElement | null>(null);
+
+  // Timer refs (avoid stale closure issues in rAF loop)
+  const badStartRef      = useRef<number | null>(null);
+  const goodStartRef     = useRef<number | null>(null);
+  const lastAlertRef     = useRef<number>(0);
+  const isAnalyzingRef   = useRef(false);
+  const calibSamplesRef  = useRef<Partial<CalibrationBaseline>[]>([]);
+  const calibrationRef   = useRef<CalibrationBaseline | null>(null);
+  const metricsRef       = useRef<PostureMetrics | null>(null);
+
+  const [appState, setState] = useState<AppState>('SPLASH');
   const [metrics, setMetrics] = useState<PostureMetrics | null>(null);
   const [alert, setAlert] = useState<AlertData | null>(null);
-  const [badPostureStart, setBadPostureStart] = useState<number | null>(null);
-  const [lastAnalysisTime, setLastAnalysisTime] = useState<number>(0);
-  const [elapsedBadMs, setElapsedBadMs] = useState<number>(0);
+  const [badMs, setBadMs] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [calibProgress, setCalibProgress] = useState(0); // 0-100
+  const [calibration, setCalibration] = useState<CalibrationBaseline | null>(null);
   const [fps, setFps] = useState(0);
+  const [noPerson, setNoPerson] = useState(false);
 
-  const metricsRef = useRef<PostureMetrics | null>(null);
-  const badPostureStartRef = useRef<number | null>(null);
-  const lastAnalysisTimeRef = useRef<number>(0);
-  const isAnalyzingRef = useRef(false);
+  const appStateRef = useRef<AppState>('SPLASH');
+  appStateRef.current = appState;
 
-  // Keep refs in sync with state
-  metricsRef.current = metrics;
-  badPostureStartRef.current = badPostureStart;
-  lastAnalysisTimeRef.current = lastAnalysisTime;
-  isAnalyzingRef.current = isAnalyzing;
-
-  // ── Load MediaPipe ────────────────────────────────────────────────
+  // ── Load MediaPipe ─────────────────────────────────────────────────────────
   const loadMediaPipe = useCallback(async () => {
-    setAppState('LOADING');
+    setState('LOADING');
     try {
-      const vision = await import('@mediapipe/tasks-vision');
-      const { PoseLandmarker, FilesetResolver } = vision;
-
+      const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
       const filesetResolver = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
       );
-
-      const poseLandmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
+      const landmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
         baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
           delegate: 'GPU',
         },
         runningMode: 'VIDEO',
@@ -80,19 +91,16 @@ export default function PosChair() {
         minTrackingConfidence: 0.5,
         outputSegmentationMasks: false,
       });
-
-      poseLandmarkerRef.current = poseLandmarker;
-      setAppState('ACTIVE');
-    } catch (err) {
-      console.error('MediaPipe load error:', err);
-      // Retry with CPU
+      landmarkerRef.current = landmarker;
+      setState('CALIBRATING');
+    } catch {
+      // CPU fallback
       try {
-        const vision = await import('@mediapipe/tasks-vision');
-        const { PoseLandmarker, FilesetResolver } = vision;
+        const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
         const filesetResolver = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
         );
-        const poseLandmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
+        const landmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
             delegate: 'CPU',
@@ -103,15 +111,14 @@ export default function PosChair() {
           minPosePresenceConfidence: 0.5,
           minTrackingConfidence: 0.5,
         });
-        poseLandmarkerRef.current = poseLandmarker;
-        setAppState('ACTIVE');
-      } catch (err2) {
-        console.error('MediaPipe CPU fallback error:', err2);
+        landmarkerRef.current = landmarker;
+        setState('CALIBRATING');
+      } catch (e) {
+        console.error('MediaPipe failed to load:', e);
       }
     }
   }, []);
 
-  // ── Start Camera ──────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -124,33 +131,35 @@ export default function PosChair() {
         await videoRef.current.play();
       }
       await loadMediaPipe();
-    } catch (err) {
-      console.error('Camera error:', err);
+    } catch (e) {
+      console.error('Camera error:', e);
     }
   }, [loadMediaPipe]);
 
-  // ── AI Analysis ───────────────────────────────────────────────────
-  const triggerAnalysis = useCallback(async (currentMetrics: PostureMetrics, badMs: number) => {
+  // ── AI Analysis ────────────────────────────────────────────────────────────
+  const triggerAnalysis = useCallback(async (m: PostureMetrics, badDurationMs: number) => {
     if (isAnalyzingRef.current) return;
     isAnalyzingRef.current = true;
     setIsAnalyzing(true);
 
     try {
-      const urgency = getUrgencyLevel(badMs);
-      const prompt = buildAnalysisPrompt(currentMetrics, urgency);
+      const urgency = getUrgencyLevel(badDurationMs);
+      const prompt  = buildAnalysisPrompt(m, urgency, badDurationMs);
 
-      const analysisRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-      });
+      const [analyzeRes] = await Promise.all([
+        fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt }),
+        }),
+      ]);
 
-      if (!analysisRes.ok) throw new Error('Analysis failed');
-      const { correction } = await analysisRes.json();
+      if (!analyzeRes.ok) throw new Error('Analysis API failed');
+      const { correction } = await analyzeRes.json();
+      const alertData: AlertData = { text: correction, urgency, isPlaying: true, timestamp: Date.now() };
+      setAlert(alertData);
 
-      setAlert({ text: correction, urgency, isPlaying: true });
-
-      // TTS via ElevenLabs
+      // Speak it
       const speakRes = await fetch('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -158,217 +167,229 @@ export default function PosChair() {
       });
 
       if (speakRes.ok) {
-        const audioBlob = await speakRes.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-        if (audioRef.current) {
-          audioRef.current.src = audioUrl;
-          await audioRef.current.play();
-          audioRef.current.onended = () => {
-            setAlert(prev => prev ? { ...prev, isPlaying: false } : null);
-            URL.revokeObjectURL(audioUrl);
-            // Clear alert after 8 seconds of silence
-            setTimeout(() => setAlert(null), 8000);
-          };
-        }
+        const blob    = await speakRes.blob();
+        const url     = URL.createObjectURL(blob);
+        const audio   = audioRef.current!;
+        audio.src     = url;
+        await audio.play();
+        audio.onended = () => {
+          setAlert(prev => prev ? { ...prev, isPlaying: false } : null);
+          URL.revokeObjectURL(url);
+          setTimeout(() => setAlert(null), 8000);
+        };
       }
 
-      setLastAnalysisTime(Date.now());
-      lastAnalysisTimeRef.current = Date.now();
-    } catch (err) {
-      console.error('Analysis error:', err);
+      lastAlertRef.current = Date.now();
+    } catch (e) {
+      console.error('Analysis error:', e);
     } finally {
       isAnalyzingRef.current = false;
       setIsAnalyzing(false);
     }
   }, []);
 
-  // ── Draw Skeleton on Canvas ───────────────────────────────────────
+  // ── Skeleton Drawing ───────────────────────────────────────────────────────
   const drawSkeleton = useCallback((
     ctx: CanvasRenderingContext2D,
-    landmarks: PoseLandmark[],
-    w: number,
-    h: number,
+    lms: PoseLandmark[],
+    W: number, H: number,
     isGood: boolean,
-    isMinimap: boolean
+    mini: boolean
   ) => {
-    const lineColor = isGood ? '#00ff41' : '#ff0040';
-    const dotColor = '#ffd700';
-    const lineWidth = isMinimap ? 1.5 : 2.5;
-    const dotRadius = isMinimap ? 3 : 5;
+    const lineCol = isGood ? '#00ff41' : '#ff0040';
+    const dotCol  = '#ffd700';
+    const lw      = mini ? 1.5 : 2.5;
+    const dr      = mini ? 3   : 5;
 
-    // Draw connections
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = lineWidth;
-    ctx.shadowColor = lineColor;
-    ctx.shadowBlur = isMinimap ? 4 : 8;
+    ctx.shadowColor = lineCol;
+    ctx.shadowBlur  = mini ? 4 : 10;
+    ctx.strokeStyle = lineCol;
+    ctx.lineWidth   = lw;
 
     for (const [a, b] of POSE_CONNECTIONS) {
-      const lmA = landmarks[a];
-      const lmB = landmarks[b];
+      const lmA = lms[a]; const lmB = lms[b];
       if (!lmA || !lmB) continue;
       if ((lmA.visibility ?? 1) < 0.3 || (lmB.visibility ?? 1) < 0.3) continue;
-
       ctx.beginPath();
-      ctx.moveTo(lmA.x * w, lmA.y * h);
-      ctx.lineTo(lmB.x * w, lmB.y * h);
+      ctx.moveTo(lmA.x * W, lmA.y * H);
+      ctx.lineTo(lmB.x * W, lmB.y * H);
       ctx.stroke();
     }
 
-    // Draw joints
-    ctx.fillStyle = dotColor;
-    ctx.shadowColor = dotColor;
-    ctx.shadowBlur = isMinimap ? 6 : 12;
+    ctx.fillStyle   = dotCol;
+    ctx.shadowColor = dotCol;
+    ctx.shadowBlur  = mini ? 6 : 14;
 
-    const keyLandmarks = [0, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24];
-    for (const idx of keyLandmarks) {
-      const lm = landmarks[idx];
+    const keyIds = [0, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24];
+    for (const id of keyIds) {
+      const lm = lms[id];
       if (!lm || (lm.visibility ?? 1) < 0.3) continue;
       ctx.beginPath();
-      ctx.arc(lm.x * w, lm.y * h, dotRadius, 0, Math.PI * 2);
+      ctx.arc(lm.x * W, lm.y * H, dr, 0, Math.PI * 2);
       ctx.fill();
     }
-
     ctx.shadowBlur = 0;
   }, []);
 
-  // ── Main Render Loop ──────────────────────────────────────────────
+  // ── Main rAF Loop ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (appState !== 'ACTIVE') return;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
+    if (appState !== 'CALIBRATING' && appState !== 'ACTIVE') return;
+
+    const video   = videoRef.current;
+    const canvas  = canvasRef.current;
     const minimap = minimapRef.current;
-    const landmarker = poseLandmarkerRef.current;
+    const lander  = landmarkerRef.current;
+    if (!video || !canvas || !minimap || !lander) return;
 
-    if (!video || !canvas || !minimap || !landmarker) return;
-
-    const ctx = canvas.getContext('2d')!;
+    const ctx  = canvas.getContext('2d')!;
     const mCtx = minimap.getContext('2d')!;
 
-    let lastTs = 0;
+    let calibStart      = appState === 'CALIBRATING' ? Date.now() : 0;
+    const CALIB_DURATION = 3000; // 3-second calibration
     let frameCount = 0;
-    let fpsTimer = 0;
+    let fpsTimer   = 0;
 
-    const render = (timestamp: number) => {
-      if (video.readyState < 2) {
-        rafRef.current = requestAnimationFrame(render);
-        return;
-      }
+    const loop = (ts: number) => {
+      if (video.readyState < 2) { rafRef.current = requestAnimationFrame(loop); return; }
 
-      // FPS counter
+      // FPS
       frameCount++;
-      if (timestamp - fpsTimer > 1000) {
-        setFps(frameCount);
-        frameCount = 0;
-        fpsTimer = timestamp;
-      }
+      if (ts - fpsTimer > 1000) { setFps(frameCount); frameCount = 0; fpsTimer = ts; }
 
-      // Run pose detection
-      const results = landmarker.detectForVideo(video, timestamp);
+      // Detect
+      const results = lander.detectForVideo(video, ts);
       const lms: PoseLandmark[] = results.landmarks?.[0] ?? [];
 
-      // ── Main canvas ──
-      canvas.width = canvas.offsetWidth;
+      // Resize canvases
+      canvas.width  = canvas.offsetWidth;
       canvas.height = canvas.offsetHeight;
-      const W = canvas.width;
-      const H = canvas.height;
+      minimap.width  = minimap.offsetWidth;
+      minimap.height = minimap.offsetHeight;
+      const [W, H, mW, mH] = [canvas.width, canvas.height, minimap.width, minimap.height];
 
       ctx.clearRect(0, 0, W, H);
-
-      // ── Minimap canvas ──
-      minimap.width = minimap.offsetWidth;
-      minimap.height = minimap.offsetHeight;
-      const mW = minimap.width;
-      const mH = minimap.height;
-
       mCtx.fillStyle = '#000';
       mCtx.fillRect(0, 0, mW, mH);
 
-      if (lms.length > 0) {
-        setAppState('ACTIVE');
+      if (lms.length === 0) {
+        setNoPerson(true);
+        // Draw no-signal grid on minimap
+        mCtx.strokeStyle = '#1a5c22'; mCtx.lineWidth = 0.5;
+        for (let x = 0; x < mW; x += 20) { mCtx.beginPath(); mCtx.moveTo(x,0); mCtx.lineTo(x,mH); mCtx.stroke(); }
+        for (let y = 0; y < mH; y += 20) { mCtx.beginPath(); mCtx.moveTo(0,y); mCtx.lineTo(mW,y); mCtx.stroke(); }
+        mCtx.fillStyle = '#1a5c22'; mCtx.font = '10px monospace'; mCtx.textAlign = 'center';
+        mCtx.fillText('NO SIGNAL', mW/2, mH/2);
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      setNoPerson(false);
 
-        // Analyze posture
-        const newMetrics = analyzePosture(lms);
-        if (newMetrics) {
-          setMetrics(newMetrics);
+      // ── CALIBRATION PHASE ──────────────────────────────────────────────────
+      if (appStateRef.current === 'CALIBRATING') {
+        const elapsed = Date.now() - calibStart;
+        const progress = Math.min(100, (elapsed / CALIB_DURATION) * 100);
+        setCalibProgress(progress);
 
-          const isGood = newMetrics.isGoodPosture;
+        // Sample this frame
+        const sample = sampleCalibrationFrame(lms);
+        if (sample) calibSamplesRef.current.push(sample);
 
-          // Draw on main camera
-          drawSkeleton(ctx, lms, W, H, isGood, false);
+        // Draw skeleton (green during calibration)
+        drawSkeleton(ctx, lms, W, H, true, false);
+        drawSkeleton(mCtx, lms, mW, mH, true, true);
 
-          // Draw on minimap
-          drawSkeleton(mCtx, lms, mW, mH, isGood, true);
+        // Draw calibration ring on main canvas
+        const earMid = { x: (lms[7].x + lms[8].x) / 2, y: (lms[7].y + lms[8].y) / 2 };
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth   = 3;
+        ctx.shadowColor = '#ffd700';
+        ctx.shadowBlur  = 15;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        ctx.arc(earMid.x * W, earMid.y * H, 40, -Math.PI/2, (-Math.PI/2) + (2 * Math.PI * progress / 100));
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
 
-          // Draw posture issue highlights on main canvas
-          if (!isGood && newMetrics.issues.length > 0) {
-            const shoulder11 = lms[11];
-            const shoulder12 = lms[12];
-            if (shoulder11 && shoulder12) {
-              ctx.strokeStyle = 'rgba(255,0,64,0.4)';
-              ctx.lineWidth = 1;
-              ctx.setLineDash([4, 4]);
-              ctx.strokeRect(
-                shoulder12.x * W - 10,
-                shoulder11.y * H - 30,
-                (shoulder11.x - shoulder12.x) * W + 20,
-                80
-              );
-              ctx.setLineDash([]);
-            }
-          }
-
-          // ── Bad posture timer + trigger AI ──
-          const now = Date.now();
-          if (!isGood) {
-            if (!badPostureStartRef.current) {
-              setBadPostureStart(now);
-              badPostureStartRef.current = now;
-            }
-            const badMs = now - badPostureStartRef.current;
-            setElapsedBadMs(badMs);
-
-            const cooldown = 45000; // 45s between alerts
-            const shouldTrigger =
-              badMs >= 30000 &&
-              !isAnalyzingRef.current &&
-              now - lastAnalysisTimeRef.current > cooldown;
-
-            if (shouldTrigger) {
-              triggerAnalysis(newMetrics, badMs);
-            }
-          } else {
-            setBadPostureStart(null);
-            badPostureStartRef.current = null;
-            setElapsedBadMs(0);
-          }
+        if (elapsed >= CALIB_DURATION) {
+          // Finalize calibration
+          const baseline = captureCalibration(calibSamplesRef.current);
+          calibrationRef.current = baseline;
+          setCalibration(baseline);
+          resetSmoothers();
+          setState('ACTIVE');
+          appStateRef.current = 'ACTIVE';
+          badStartRef.current = null;
+          goodStartRef.current = null;
+          lastAlertRef.current = 0;
+          calibSamplesRef.current = [];
         }
-      } else {
-        // No person detected — draw grid on minimap
-        mCtx.strokeStyle = '#1a5c22';
-        mCtx.lineWidth = 0.5;
-        for (let x = 0; x < mW; x += 20) {
-          mCtx.beginPath();
-          mCtx.moveTo(x, 0); mCtx.lineTo(x, mH); mCtx.stroke();
-        }
-        for (let y = 0; y < mH; y += 20) {
-          mCtx.beginPath();
-          mCtx.moveTo(0, y); mCtx.lineTo(mW, y); mCtx.stroke();
-        }
-        mCtx.fillStyle = '#1a5c22';
-        mCtx.font = '10px monospace';
-        mCtx.textAlign = 'center';
-        mCtx.fillText('NO SIGNAL', mW / 2, mH / 2);
+
+        rafRef.current = requestAnimationFrame(loop);
+        return;
       }
 
-      lastTs = timestamp;
-      rafRef.current = requestAnimationFrame(render);
+      // ── ACTIVE PHASE ───────────────────────────────────────────────────────
+      const m = analyzePosture(lms, calibrationRef.current);
+      if (m) {
+        setMetrics(m);
+        metricsRef.current = m;
+
+        const isGood = m.isGoodPosture;
+        const now    = Date.now();
+
+        drawSkeleton(ctx, lms, W, H, isGood, false);
+        drawSkeleton(mCtx, lms, mW, mH, isGood, true);
+
+        // Draw issue highlight box
+        if (!isGood && lms[LM.LEFT_SHOULDER] && lms[LM.RIGHT_SHOULDER]) {
+          const lsh = lms[LM.LEFT_SHOULDER];
+          const rsh = lms[LM.RIGHT_SHOULDER];
+          ctx.strokeStyle = 'rgba(255,0,64,0.35)';
+          ctx.lineWidth   = 1;
+          ctx.setLineDash([5, 5]);
+          ctx.strokeRect(
+            rsh.x * W - 12, (lms[LM.NOSE].y * H) - 8,
+            (lsh.x - rsh.x) * W + 24,
+            (lsh.y - lms[LM.NOSE].y) * H + 40
+          );
+          ctx.setLineDash([]);
+        }
+
+        // ── State machine ──────────────────────────────────────────────────
+        if (!isGood) {
+          goodStartRef.current = null; // reset good-posture timer
+          if (!badStartRef.current) badStartRef.current = now;
+          const duration = now - badStartRef.current;
+          setBadMs(duration);
+
+          const shouldAlert =
+            duration >= TIMING.T_WARN_MS &&
+            !isAnalyzingRef.current &&
+            now - lastAlertRef.current > TIMING.T_COOLDOWN_MS;
+
+          if (shouldAlert) triggerAnalysis(m, duration);
+
+        } else {
+          // Good posture: start T_reset timer before clearing bad state
+          if (!goodStartRef.current) goodStartRef.current = now;
+          const goodDuration = now - goodStartRef.current;
+
+          if (goodDuration >= TIMING.T_RESET_MS) {
+            badStartRef.current  = null;
+            goodStartRef.current = null;
+            setBadMs(0);
+          }
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(loop);
     };
 
-    rafRef.current = requestAnimationFrame(render);
+    rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
   }, [appState, drawSkeleton, triggerAnalysis]);
 
-  // ── Cleanup ───────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       cancelAnimationFrame(rafRef.current);
@@ -376,25 +397,33 @@ export default function PosChair() {
     };
   }, []);
 
-  // ── Score color helper ────────────────────────────────────────────
-  const scoreColor = (score: number) => score >= 80 ? 'ok' : score >= 60 ? 'warn' : 'bad';
-  const metricStatus = (val: number, good: boolean) => good ? 'ok' : val > 0 ? 'warn' : 'bad';
-
-  const formatTimer = (ms: number) => {
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const fmt = (ms: number) => {
     const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   };
 
-  const postureOk = metrics?.isGoodPosture ?? true;
+  const recalibrate = () => {
+    calibSamplesRef.current = [];
+    badStartRef.current     = null;
+    goodStartRef.current    = null;
+    setBadMs(0);
+    setAlert(null);
+    setCalibProgress(0);
+    resetSmoothers();
+    setState('CALIBRATING');
+  };
 
-  // ── Render ────────────────────────────────────────────────────────
+  const score    = metrics?.postureScore ?? 100;
+  const isGood   = metrics?.isGoodPosture ?? true;
+  const isBad    = badMs > 0;
+
+  // ── JSX ────────────────────────────────────────────────────────────────────
   return (
     <div className="dashboard">
-      {/* Hidden audio element */}
       <audio ref={audioRef} style={{ display: 'none' }} />
 
-      {/* ── Splash Screen ── */}
+      {/* ── SPLASH ── */}
       {appState === 'SPLASH' && (
         <div className="splash-screen">
           <div className="ascii-logo">{`
@@ -407,71 +436,132 @@ export default function PosChair() {
           </div>
           <div className="splash-title">POSTURE MONITORING SYSTEM</div>
           <div className="splash-subtitle">
-            Real-time AI posture coach. Sit straight. Feel great.
-            Voice corrections via ElevenLabs.
+            MediaPipe BlazePose → Gemini 3.8 Flash → ElevenLabs Voice
+          </div>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div className="spec-badge">📡 33 KEYPOINTS</div>
+            <div className="spec-badge">🧠 5 METRICS</div>
+            <div className="spec-badge">🎙️ VOICE ALERTS</div>
+            <div className="spec-badge">🎯 CALIBRATED</div>
           </div>
           <button className="pixel-btn" onClick={startCamera} id="start-btn">
-            ▶ INITIALIZE CAMERA
+            ▶ INITIALIZE SYSTEM
           </button>
-          <div className="splash-subtitle" style={{ fontSize: '14px', color: 'var(--green-dim)' }}>
-            Camera access required for pose detection
+          <div className="splash-subtitle" style={{ fontSize: '13px', color: 'var(--green-dim)' }}>
+            Camera access required · Sit in good posture for calibration
           </div>
         </div>
       )}
 
-      {/* ── Loading Screen ── */}
+      {/* ── LOADING ── */}
       {appState === 'LOADING' && (
         <div className="splash-screen">
           <div className="splash-title">LOADING AI ENGINE</div>
-          <div className="splash-subtitle">Initializing MediaPipe BlazePose...</div>
+          <div className="splash-subtitle">Downloading MediaPipe BlazePose Full model...</div>
           <div className="loading-bar-container">
             <div className="loading-bar-fill" />
           </div>
           <div className="splash-subtitle" style={{ fontSize: '14px', color: 'var(--green-dim)' }}>
-            Loading pose landmarker model...
+            ~3-5 seconds on first load (cached after)
           </div>
         </div>
       )}
 
-      {/* ── Header Bar ── */}
+      {/* ── CALIBRATION OVERLAY (over the camera) ── */}
+      {appState === 'CALIBRATING' && (
+        <>
+          <header className="header-bar">
+            <div className="header-logo">🎮 POS<span>CHAIR</span> <span style={{color:'var(--amber)'}}>// CALIBRATING</span></div>
+          </header>
+          <div className="main-content">
+            <section className="camera-section">
+              <video ref={videoRef} className="camera-video" playsInline muted />
+              <canvas ref={canvasRef} className="camera-canvas" />
+              <div className="camera-corner tl" /><div className="camera-corner tr" />
+              <div className="camera-corner bl" /><div className="camera-corner br" />
+              <div className="calib-overlay">
+                <div className="calib-title">SIT IN YOUR BEST POSTURE</div>
+                <div className="calib-sub">Head up · Shoulders level · Spine tall</div>
+                <div className="calib-bar-wrap">
+                  <div className="calib-bar" style={{ width: `${calibProgress}%` }} />
+                </div>
+                <div className="calib-pct">{calibProgress.toFixed(0)}%</div>
+              </div>
+            </section>
+            <aside className="right-panel">
+              <div className="minimap-section">
+                <div className="section-header">SKELETON_WIREFRAME</div>
+                <div className="minimap-canvas-wrapper">
+                  <canvas ref={minimapRef} className="minimap-canvas" />
+                  <div className="minimap-scanline" />
+                </div>
+              </div>
+              <div className="metrics-section">
+                <div className="section-header">CALIBRATION_GUIDE</div>
+                {[
+                  { icon: '👀', text: 'Look straight at camera' },
+                  { icon: '📐', text: 'Ears aligned over shoulders' },
+                  { icon: '💪', text: 'Relax shoulders — don\'t shrug' },
+                  { icon: '🪑', text: 'Sit tall — back straight' },
+                  { icon: '⚖️', text: 'Weight even on both hips' },
+                ].map(({ icon, text }) => (
+                  <div key={text} className="metric-row" style={{ gap: '12px', padding: '4px 0' }}>
+                    <span style={{ fontSize: '20px' }}>{icon}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '20px', color: 'var(--green-mid)' }}>{text}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="alert-section">
+                <div className="alert-idle" style={{ borderColor: 'var(--amber)', color: 'var(--amber)' }}>
+                  ⚡ CAPTURING NEUTRAL BASELINE<br/>
+                  <span style={{ fontSize: '14px' }}>This improves accuracy by ~15%</span>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </>
+      )}
+
+      {/* ── ACTIVE DASHBOARD ── */}
       {appState === 'ACTIVE' && (
         <>
           <header className="header-bar">
-            <div className="header-logo">
-              🎮 POS<span>CHAIR</span>
-              <span style={{ color: 'var(--green-dim)', marginLeft: 8 }}>v1.0</span>
-            </div>
+            <div className="header-logo">🎮 POS<span>CHAIR</span><span style={{color:'var(--green-dim)',marginLeft:8}}>v2.0</span></div>
             <div className="header-status">
-              <span className="score-badge">
-                SCORE: {metrics?.postureScore ?? '--'}/100
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', color: 'var(--green-dim)' }}>
-                {fps}fps
-              </span>
-              <div className={`status-pill ${postureOk ? 'good' : badPostureStart ? 'bad' : 'idle'}`}>
+              <span className="score-badge">SCORE: {score}/100</span>
+              <span style={{ fontFamily:'var(--font-mono)', fontSize:'16px', color:'var(--green-dim)' }}>{fps}fps</span>
+              {calibration && (
+                <span style={{ fontFamily:'var(--font-pixel)', fontSize:'7px', color:'var(--amber)' }}>
+                  🎯 CAL
+                </span>
+              )}
+              <button
+                className="pixel-btn"
+                style={{ fontSize: '7px', padding: '4px 8px' }}
+                onClick={recalibrate}
+                id="recalibrate-btn"
+              >↺ RECAL</button>
+              <div className={`status-pill ${noPerson ? 'idle' : isGood ? 'good' : 'bad'}`}>
                 <div className="status-dot" />
-                {postureOk ? 'GOOD' : badPostureStart ? 'BAD POSTURE' : 'IDLE'}
+                {noPerson ? 'NO SIGNAL' : isGood ? 'GOOD' : 'BAD POSTURE'}
               </div>
             </div>
           </header>
 
-          {/* ── Main Content ── */}
           <div className="main-content">
-            {/* ── Camera (left) ── */}
+            {/* Camera */}
             <section className="camera-section">
               <video ref={videoRef} className="camera-video" playsInline muted />
               <canvas ref={canvasRef} className="camera-canvas" />
-              <div className="camera-label">CAM_01 // POSE TRACKING</div>
-              <div className="camera-corner tl" />
-              <div className="camera-corner tr" />
-              <div className="camera-corner bl" />
-              <div className="camera-corner br" />
+              <div className="camera-label">CAM_01 // MEDIAPIPE BLAZEPOSE FULL</div>
+              <div className="camera-corner tl" /><div className="camera-corner tr" />
+              <div className="camera-corner bl" /><div className="camera-corner br" />
             </section>
 
-            {/* ── Right Panel ── */}
+            {/* Right Panel */}
             <aside className="right-panel">
 
-              {/* ── Skeleton Minimap ── */}
+              {/* Skeleton Minimap */}
               <div className="minimap-section">
                 <div className="section-header">SKELETON_WIREFRAME</div>
                 <div className="minimap-canvas-wrapper">
@@ -480,95 +570,112 @@ export default function PosChair() {
                 </div>
               </div>
 
-              {/* ── Live Metrics ── */}
+              {/* Live Metrics */}
               <div className="metrics-section">
-                <div className="section-header">LIVE_POSTURE_DATA</div>
+                <div className="section-header">LIVE_POSTURE_DATA {calibration ? '// CALIBRATED' : '// UNCALIBRATED'}</div>
 
                 {/* Score bar */}
                 <div className="metric-bar-row">
                   <span className="metric-bar-label">POSTURE_SCORE</span>
                   <div className="metric-bar-track">
                     <div
-                      className={`metric-bar-fill score-fill ${
-                        (metrics?.postureScore ?? 100) < 50 ? 'low' :
-                        (metrics?.postureScore ?? 100) < 70 ? 'mid' : ''
-                      }`}
-                      style={{ width: `${metrics?.postureScore ?? 0}%` }}
+                      className={`metric-bar-fill score-fill${score < 50 ? ' low' : score < 72 ? ' mid' : ''}`}
+                      style={{ width: `${score}%` }}
                     />
                   </div>
-                  <span className="score-number">{metrics?.postureScore ?? '--'}</span>
+                  <span className="score-number">{score}</span>
                 </div>
 
-                {/* Metrics */}
                 {metrics ? (
                   <>
                     <div className="metric-row">
-                      <span className="metric-key">&gt; HEAD_TILT:</span>
-                      <span className={`metric-value ${Math.abs(metrics.headTiltAngle) > 18 ? 'bad' : Math.abs(metrics.headTiltAngle) > 10 ? 'warn' : 'ok'}`}>
-                        {metrics.headTiltAngle > 0 ? '+' : ''}{metrics.headTiltAngle.toFixed(1)}°
+                      <span className="metric-key">&gt; HEAD_ANGLE:</span>
+                      <span className={`metric-value ${metrics.headNeckShoulderAngle < 140 ? 'bad' : metrics.headNeckShoulderAngle < 152 ? 'warn' : 'ok'}`}>
+                        {metrics.headNeckShoulderAngle.toFixed(1)}°
                       </span>
                     </div>
                     <div className="metric-row">
-                      <span className="metric-key">&gt; CHIN_RATIO:</span>
-                      <span className={`metric-value ${metrics.chinNodRatio < 0.5 ? 'bad' : metrics.chinNodRatio < 0.7 ? 'warn' : 'ok'}`}>
-                        {metrics.chinNodRatio.toFixed(2)}
+                      <span className="metric-key">&gt; TILT:</span>
+                      <span className={`metric-value ${Math.abs(metrics.lateralTiltDeg) > 15 ? 'bad' : Math.abs(metrics.lateralTiltDeg) > 8 ? 'warn' : 'ok'}`}>
+                        {metrics.lateralTiltDeg > 0 ? '+' : ''}{metrics.lateralTiltDeg.toFixed(1)}°
                       </span>
                     </div>
                     <div className="metric-row">
                       <span className="metric-key">&gt; SHRUG:</span>
-                      <span className={`metric-value ${metrics.shoulderShrug < 0.3 ? 'bad' : metrics.shoulderShrug < 0.4 ? 'warn' : 'ok'}`}>
-                        {metrics.shoulderShrug < 0.4 ? `${(metrics.shoulderShrug).toFixed(2)} ⚠` : 'CLEAR'}
+                      <span className={`metric-value ${metrics.shoulderShrug < 0.30 ? 'bad' : metrics.shoulderShrug < 0.38 ? 'warn' : 'ok'}`}>
+                        {metrics.shoulderShrug < 0.38 ? `${metrics.shoulderShrug.toFixed(2)} ⚠` : 'CLEAR'}
                       </span>
                     </div>
                     <div className="metric-row">
                       <span className="metric-key">&gt; ASYMMETRY:</span>
-                      <span className={`metric-value ${metrics.shoulderAsymmetry > 0.15 ? 'bad' : metrics.shoulderAsymmetry > 0.08 ? 'warn' : 'ok'}`}>
+                      <span className={`metric-value ${metrics.shoulderAsymmetry > 0.14 ? 'bad' : metrics.shoulderAsymmetry > 0.07 ? 'warn' : 'ok'}`}>
                         {(metrics.shoulderAsymmetry * 100).toFixed(1)}%
                       </span>
                     </div>
                     <div className="metric-row">
-                      <span className="metric-key">&gt; TRUNK_LEAN:</span>
+                      <span className="metric-key">&gt; LEAN:</span>
                       <span className={`metric-value ${Math.abs(metrics.trunkLean) > 0.20 ? 'bad' : Math.abs(metrics.trunkLean) > 0.12 ? 'warn' : 'ok'}`}>
                         {metrics.trunkLean > 0 ? '+' : ''}{metrics.trunkLean.toFixed(2)}
                       </span>
                     </div>
                     <div className="metric-row">
-                      <span className="metric-key">&gt; ISSUES:</span>
-                      <span className={`metric-value ${metrics.issues.length > 0 ? 'bad' : 'ok'}`}>
-                        {metrics.issues.length === 0 ? 'NONE' : metrics.issues.length}
+                      <span className="metric-key">&gt; FHP_DEPTH:</span>
+                      <span className={`metric-value ${metrics.zFhpDelta < -0.10 ? 'bad' : metrics.zFhpDelta < -0.06 ? 'warn' : 'ok'}`}>
+                        {metrics.zFhpDelta.toFixed(3)}
                       </span>
                     </div>
+                    <div className="metric-row">
+                      <span className="metric-key">&gt; ISSUES:</span>
+                      <span className={`metric-value ${metrics.issues.length > 0 ? 'bad' : 'ok'}`}>
+                        {metrics.issues.length === 0 ? 'NONE' : metrics.issues.map(i => i.type.split('_')[0]).join(', ')}
+                      </span>
+                    </div>
+                    {calibration && Object.keys(metrics.deviations).length > 0 && (
+                      <div className="metric-row" style={{ marginTop: '4px' }}>
+                        <span className="metric-key" style={{ color: 'var(--amber)' }}>&gt; CAL_DELTA:</span>
+                        <span className={`metric-value ${(metrics.deviations.headNeckShoulder ?? 0) > 15 ? 'bad' : 'warn'}`}>
+                          {(metrics.deviations.headNeckShoulder ?? 0) > 0
+                            ? `-${(metrics.deviations.headNeckShoulder ?? 0).toFixed(1)}°`
+                            : 'ON BASELINE'}
+                        </span>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="metric-row" style={{ color: 'var(--green-dim)' }}>
-                    <span>&gt; AWAITING SIGNAL...</span>
-                    <span className="cursor-blink" />
+                    <span>&gt; AWAITING SIGNAL...<span className="cursor-blink" /></span>
                   </div>
                 )}
 
                 {/* Bad posture timer */}
-                {badPostureStart && elapsedBadMs > 0 && (
+                {isBad && badMs > 0 && (
                   <div className="timer-row">
-                    ⚠ BAD_POSTURE: {formatTimer(elapsedBadMs)}
-                    {isAnalyzing && <span style={{ color: 'var(--amber)' }}> [ANALYZING...]</span>}
+                    ⚠ BAD: {fmt(badMs)}
+                    {isAnalyzing && <span style={{ color: 'var(--amber)', fontSize: '16px' }}> [QUERYING AI...]</span>}
+                  </div>
+                )}
+
+                {/* Alert cooldown indicator */}
+                {!isBad && !isGood && (
+                  <div className="metric-row" style={{ color: 'var(--green-dim)', fontSize: '16px' }}>
+                    <span>&gt; CONFIRMING CORRECTION...<span className="cursor-blink" /></span>
                   </div>
                 )}
               </div>
 
-              {/* ── AI Alert Section ── */}
+              {/* AI Alert */}
               <div className="alert-section">
                 <div className="section-header">AI_COACH_OUTPUT</div>
-
                 {alert ? (
                   <div className={`alert-box ${alert.urgency === 'URGENT' ? 'critical' : ''}`}>
                     <div className="alert-header">
                       <span>
                         {alert.urgency === 'URGENT' ? '🚨 URGENT' :
-                         alert.urgency === 'FIRM' ? '⚠ CORRECTION' :
-                         '💡 TIP'} // GEMINI 3.8 FLASH
+                         alert.urgency === 'FIRM'   ? '⚠ CORRECTION' : '💡 TIP'}
+                        {' // GEMINI 3.8 FLASH'}
                       </span>
                       <span style={{ color: 'var(--green-dim)', fontSize: '6px' }}>
-                        {new Date().toLocaleTimeString()}
+                        {new Date(alert.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
                     <div className="alert-text">{alert.text}</div>
@@ -576,13 +683,8 @@ export default function PosChair() {
                       <div className="alert-playing">
                         <div className="playing-bars">
                           {[0.2, 0.4, 0.3, 0.5, 0.2, 0.4].map((d, i) => (
-                            <div
-                              key={i}
-                              className="playing-bar"
-                              style={{
-                                height: `${6 + Math.random() * 6}px`,
-                                '--delay': `${d}s`,
-                              } as React.CSSProperties}
+                            <div key={i} className="playing-bar"
+                              style={{ height: `${6 + Math.random() * 6}px`, '--delay': `${d}s` } as React.CSSProperties}
                             />
                           ))}
                         </div>
@@ -593,17 +695,15 @@ export default function PosChair() {
                 ) : (
                   <div className="alert-idle">
                     {isAnalyzing ? (
-                      <span style={{ color: 'var(--amber)' }}>
-                        ⏳ ANALYZING POSTURE...<span className="cursor-blink" />
-                      </span>
+                      <span style={{ color: 'var(--amber)' }}>⏳ AI ANALYZING...<span className="cursor-blink" /></span>
                     ) : (
-                      <span>
-                        MONITORING ACTIVE
-                        <br />
-                        <span style={{ fontSize: '14px', color: 'var(--green-dim)' }}>
-                          Alerts fire after 30s bad posture
+                      <>
+                        <span>MONITORING ACTIVE</span>
+                        <br/>
+                        <span style={{ fontSize: '13px', color: 'var(--green-dim)' }}>
+                          Alert after {TIMING.T_WARN_MS / 1000}s bad posture
                         </span>
-                      </span>
+                      </>
                     )}
                   </div>
                 )}

@@ -658,6 +658,71 @@ body::after {
   line-height: 1.2;
 }
 
+/* ── Spec badges on splash ────────────────────────────────────────── */
+.spec-badge {
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--green-dim);
+  color: var(--green-mid);
+  letter-spacing: 1px;
+}
+
+/* ── Calibration overlay ──────────────────────────────────────────── */
+.calib-overlay {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(5,10,5,0.85);
+  border: var(--border-amber);
+  box-shadow: var(--glow-amber);
+  padding: 16px 24px;
+  text-align: center;
+  z-index: 10;
+  min-width: 300px;
+  animation: fadeIn 0.3s ease;
+}
+
+.calib-title {
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  color: var(--amber);
+  text-shadow: var(--glow-amber);
+  margin-bottom: 6px;
+  letter-spacing: 2px;
+}
+
+.calib-sub {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--green-mid);
+  margin-bottom: 12px;
+}
+
+.calib-bar-wrap {
+  width: 100%;
+  height: 12px;
+  background: rgba(255,215,0,0.1);
+  border: 1px solid var(--amber-dim);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.calib-bar {
+  height: 100%;
+  background: var(--amber);
+  box-shadow: 0 0 10px var(--amber);
+  transition: width 0.1s linear;
+}
+
+.calib-pct {
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  color: var(--amber);
+  text-shadow: var(--glow-amber);
+}
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .main-content {
