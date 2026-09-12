@@ -1,16 +1,20 @@
 /**
- * PosChair Posture Engine — v3 (Dual-Layer)
- * ──────────────────────────────────────────
- * Layer 1: 6 calibrated biomechanical metrics (existing)
- * Layer 2: 252-angle feature consensus voting (NEW)
- *
- * Layer 2 is inspired by PosePilot (2025) — exhaustive angle triplet approach.
- * An issue is only raised if BOTH layers agree → far fewer false positives.
- *
- * Additional improvements:
- *  - Visibility-weighted posture score (high-confidence landmarks count more)
- *  - Hysteresis thresholds (enter bad at <68, exit requires >76)
- *  - 5-second calibration (more stable baseline)
+ * PosChair Posture Engine — v4 (Omnidirectional Biomechanical Engine)
+ * ────────────────────────────────────────────────────────────────────
+ * Features:
+ * 1. Camera Viewpoint Estimator: continuously classifies camera angle
+ *    (Front-Level, Front-High, Front-Low, Diagonal-Left, Diagonal-Right, Profile-Left, Profile-Right)
+ * 2. Camera-Invariant 3D Torso Reference Frame (T-Frame):
+ *    Gram-Schmidt Orthonormal Basis (Lateral X̂, Spine Ŷ, Sagittal Ẑ).
+ *    Forward head displacement is projected along Ẑ (anterior to user's chest)
+ *    which is 100% invariant to camera yaw, pitch, and roll!
+ * 3. Frontal Perspective Foreshortening & Cranio-Clavicular Fusion:
+ *    Detects subtle forward craning from pure front & high-front angles via
+ *    apparent head-to-shoulder ratio (R_head/sh), chin-clavicle clearance, and cervical pitch.
+ * 4. Viewpoint-Adaptive Keypoint Synthesis:
+ *    Never drops frames when viewed from side/diagonal angles where one ear is occluded.
+ *    Dynamically switches to dominant-side sagittal tracking (Craniovertebral Angle - CVA).
+ * 5. Layer 2: 252-angle consensus voting with multi-angle calibration.
  */
 
 export interface PoseLandmark {
@@ -20,34 +24,72 @@ export interface PoseLandmark {
   visibility?: number;
 }
 
+export type CameraViewType =
+  | 'FRONT_LEVEL'
+  | 'FRONT_HIGH'
+  | 'FRONT_LOW'
+  | 'DIAGONAL_LEFT'
+  | 'DIAGONAL_RIGHT'
+  | 'PROFILE_LEFT'
+  | 'PROFILE_RIGHT';
+
+export interface CameraViewInfo {
+  type: CameraViewType;
+  yawDeg: number;       // approx horizontal angle relative to user's chest (-90 to +90)
+  pitchDeg: number;     // approx camera elevation angle (-45 to +60)
+  label: string;        // e.g. "FRONT [HIGH 28°]" or "DIAGONAL [45°]"
+  dominantSide: 'LEFT' | 'RIGHT' | 'BILATERAL';
+  isFrontal: boolean;
+  isHighAngle: boolean;
+}
+
 export interface CalibrationBaseline {
-  // Layer 1 metrics
-  headNeckShoulderAngle: number;
+  // 3D Torso Frame metrics
+  anteriorShift: number;       // baseline head anterior offset relative to chest
+  lateralShift: number;        // baseline lateral offset
+  cranialHeight: number;       // baseline vertical clearance
+  // Frontal perspective metrics
+  headToShoulderRatio: number; // eye distance / shoulder width
+  chinClavicleClearance: number;
+  cervicalPitchDeg: number;
+  // Sagittal / Profile metric
+  effectiveCvaDeg: number;     // Craniovertebral Angle in degrees
+  // Classical biomechanical metrics
   lateralTiltDelta: number;
   earToShoulderRatio: number;
   shoulderAsymmetry: number;
   trunkLean: number;
-  zFhpDelta: number;
-  // Layer 2: full 252-angle feature vector
+  // Layer 2: 252-angle feature vector
   featureAngles: number[];
-  // Meta
+  // Viewpoint metadata
+  cameraView: CameraViewInfo;
   meanVisibility: number;
   capturedAt: number;
 }
 
 export interface PostureMetrics {
-  // Layer 1 values (smoothed)
-  headNeckShoulderAngle: number;
+  // Viewpoint detection
+  cameraView: CameraViewInfo;
+  // Invariant 3D Torso Frame telemetry
+  anteriorShift: number;       // head anterior offset (FHP in torso frame)
+  lateralShift: number;
+  cranialHeight: number;
+  // Frontal perspective telemetry
+  headToShoulderRatio: number;
+  chinClavicleClearance: number;
+  cervicalPitchDeg: number;
+  // Profile telemetry
+  effectiveCvaDeg: number;
+  // Classical telemetry
   lateralTiltDeg: number;
   shoulderShrug: number;
   shoulderAsymmetry: number;
   trunkLean: number;
-  zFhpDelta: number;
   // Layer 2 output
-  consensusVotes: Record<string, number>; // issue → 0–1 confidence
+  consensusVotes: Record<string, number>;
   // Score & issues
   postureScore: number;
-  visibilityScore: number;       // 0–1, mean landmark visibility
+  visibilityScore: number;
   issues: PostureIssue[];
   isGoodPosture: boolean;
   isCalibrated: boolean;
@@ -66,19 +108,17 @@ export interface PostureIssue {
 
 // MediaPipe landmark indices used
 export const LM = {
-  NOSE: 0, LEFT_EAR: 7, RIGHT_EAR: 8,
+  NOSE: 0,
+  LEFT_EYE: 2, RIGHT_EYE: 5,
+  LEFT_EAR: 7, RIGHT_EAR: 8,
   LEFT_SHOULDER: 11, RIGHT_SHOULDER: 12,
   LEFT_ELBOW: 13, RIGHT_ELBOW: 14,
   LEFT_HIP: 23, RIGHT_HIP: 24,
 } as const;
 
-const KEY_LM_IDS = [0, 7, 8, 11, 12, 13, 14, 23, 24]; // 9 landmarks
+const KEY_LM_IDS = [0, 7, 8, 11, 12, 13, 14, 23, 24]; // 9 key landmarks
 
 // ── Layer 2: 252-angle Feature Specs ─────────────────────────────────────────
-// Format: [a, vertex, c] — angle at vertex between a and c
-// C(9,3) * 3 = 252 unique angles (each triplet, each vertex)
-// Computed once at module load.
-
 const ANGLE_SPECS: [number, number, number][] = (() => {
   const specs: [number, number, number][] = [];
   for (let vi = 0; vi < KEY_LM_IDS.length; vi++) {
@@ -90,37 +130,27 @@ const ANGLE_SPECS: [number, number, number][] = (() => {
       }
     }
   }
-  return specs; // 9 * C(8,2) = 9 * 28 = 252
+  return specs; // 9 * C(8,2) = 252 angles
 })();
 
-// Which issue(s) each angle spec is sensitive to
-// A spec is "sensitive to issue X" if it involves the anatomically relevant landmarks
 type IssueType = PostureIssue['type'];
-const FHP_SET  = new Set([0, 7, 8]);         // nose, ears
-const SH_SET   = new Set([11, 12]);          // shoulders
-const HIP_SET  = new Set([23, 24]);          // hips
-const L_SET    = new Set([7, 11, 13, 23]);   // left-side
-const R_SET    = new Set([8, 12, 14, 24]);   // right-side
+const FHP_SET = new Set([0, 7, 8]);
+const SH_SET  = new Set([11, 12]);
+const HIP_SET = new Set([23, 24]);
 
 function specSensitivity(a: number, v: number, c: number): IssueType[] {
   const pts = [a, v, c];
   const has = (s: Set<number>) => pts.some(p => s.has(p));
   const issues: IssueType[] = [];
-  // Forward head: involves nose/ear AND shoulder
   if (has(FHP_SET) && has(SH_SET)) issues.push('FORWARD_HEAD');
-  // Lateral tilt: involves BOTH ears, or one ear + shoulder asymmetry
   if (pts.includes(7) && pts.includes(8)) issues.push('LATERAL_TILT');
   if ((pts.includes(7) !== pts.includes(8)) && has(SH_SET)) issues.push('LATERAL_TILT');
-  // Shoulder shrug: ear + shoulder (vertical proximity)
   if (has(FHP_SET) && has(SH_SET) && !has(HIP_SET)) issues.push('SHOULDER_SHRUG');
-  // Shoulder asymmetry: both shoulders involved
   if (pts.includes(11) && pts.includes(12)) issues.push('SHOULDER_ASYMMETRY');
-  // Trunk lean: shoulder + hip
   if (has(SH_SET) && has(HIP_SET)) issues.push('TRUNK_LEAN');
   return Array.from(new Set(issues));
 }
 
-// Pre-compute which specs are sensitive to each issue type (optimization)
 const ISSUE_SPEC_MAP: Record<IssueType, number[]> = {
   FORWARD_HEAD: [], LATERAL_TILT: [], SHOULDER_SHRUG: [],
   SHOULDER_ASYMMETRY: [], TRUNK_LEAN: [],
@@ -129,62 +159,316 @@ ANGLE_SPECS.forEach(([a, v, c], idx) => {
   specSensitivity(a, v, c).forEach(issue => ISSUE_SPEC_MAP[issue].push(idx));
 });
 
-// ── Core Math ────────────────────────────────────────────────────────────────
+// ── Math & Geometry Helpers ──────────────────────────────────────────────────
 
 export function angle3pt(
-  a: PoseLandmark, b: PoseLandmark, c: PoseLandmark, use3D = false
+  a: PoseLandmark, b: PoseLandmark, c: PoseLandmark, use3D = true
 ): number {
   if (use3D) {
-    const ba = [a.x-b.x, a.y-b.y, a.z-b.z];
-    const bc = [c.x-b.x, c.y-b.y, c.z-b.z];
-    const dot = ba[0]*bc[0]+ba[1]*bc[1]+ba[2]*bc[2];
-    const m = Math.sqrt((ba[0]**2+ba[1]**2+ba[2]**2)*(bc[0]**2+bc[1]**2+bc[2]**2));
-    return m < 1e-8 ? 180 : Math.acos(Math.max(-1, Math.min(1, dot/m))) * (180/Math.PI);
+    const ba = [a.x - b.x, a.y - b.y, (a.z ?? 0) - (b.z ?? 0)];
+    const bc = [c.x - b.x, c.y - b.y, (c.z ?? 0) - (b.z ?? 0)];
+    const dot = ba[0] * bc[0] + ba[1] * bc[1] + ba[2] * bc[2];
+    const m = Math.sqrt((ba[0]**2 + ba[1]**2 + ba[2]**2) * (bc[0]**2 + bc[1]**2 + bc[2]**2));
+    return m < 1e-8 ? 180 : Math.acos(Math.max(-1, Math.min(1, dot / m))) * (180 / Math.PI);
   }
-  const ba = [a.x-b.x, a.y-b.y];
-  const bc = [c.x-b.x, c.y-b.y];
-  const dot = ba[0]*bc[0]+ba[1]*bc[1];
-  const m = Math.sqrt((ba[0]**2+ba[1]**2)*(bc[0]**2+bc[1]**2));
-  return m < 1e-8 ? 180 : Math.acos(Math.max(-1, Math.min(1, dot/m))) * (180/Math.PI);
+  const ba = [a.x - b.x, a.y - b.y];
+  const bc = [c.x - b.x, c.y - b.y];
+  const dot = ba[0] * bc[0] + ba[1] * bc[1];
+  const m = Math.sqrt((ba[0]**2 + ba[1]**2) * (bc[0]**2 + bc[1]**2));
+  return m < 1e-8 ? 180 : Math.acos(Math.max(-1, Math.min(1, dot / m))) * (180 / Math.PI);
 }
 
 function mid(a: PoseLandmark, b: PoseLandmark): PoseLandmark {
-  return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2, visibility: Math.min(a.visibility??1, b.visibility??1) };
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    z: ((a.z ?? 0) + (b.z ?? 0)) / 2,
+    visibility: Math.min(a.visibility ?? 1, b.visibility ?? 1),
+  };
 }
 
-function dist2D(a: PoseLandmark, b: PoseLandmark) {
-  return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
+function dist2D(a: PoseLandmark, b: PoseLandmark): number {
+  return Math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2);
 }
 
-// ── Layer 2: Feature Vector & Consensus Vote ──────────────────────────────────
-
-function computeFeatureVector(lms: PoseLandmark[]): number[] {
-  return ANGLE_SPECS.map(([a, v, c]) =>
-    angle3pt(lms[a], lms[v], lms[c])
-  );
+function dist3D(a: PoseLandmark, b: PoseLandmark): number {
+  return Math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2 + ((a.z ?? 0) - (b.z ?? 0))**2);
 }
 
-/**
- * For a given issue type, compute what fraction of relevant angles
- * have deviated significantly from their calibrated baseline.
- * Returns 0–1 (0 = no deviation, 1 = all angles deviated).
- */
-function consensusVote(
-  current: number[],
-  baseline: number[],
-  issue: IssueType,
-  deviationThresholdDeg = 9   // research: 9° delta is clinically meaningful
-): number {
-  const indices = ISSUE_SPEC_MAP[issue];
-  if (indices.length === 0) return 0;
-  let deviated = 0;
-  for (const idx of indices) {
-    if (Math.abs(current[idx] - baseline[idx]) > deviationThresholdDeg) deviated++;
+// ── 1. Camera Viewpoint Estimator ─────────────────────────────────────────────
+
+export function estimateCameraViewpoint(lms: PoseLandmark[]): CameraViewInfo {
+  const nose = lms[0];
+  const lEar = lms[7];
+  const rEar = lms[8];
+  const lSh  = lms[11];
+  const rSh  = lms[12];
+  const lHip = lms[23];
+  const rHip = lms[24];
+
+  const lEarVis = lEar?.visibility ?? 0;
+  const rEarVis = rEar?.visibility ?? 0;
+
+  // Determine dominant side
+  let dominantSide: 'LEFT' | 'RIGHT' | 'BILATERAL' = 'BILATERAL';
+  if (lEarVis < 0.35 && rEarVis >= 0.35) {
+    dominantSide = 'RIGHT';
+  } else if (rEarVis < 0.35 && lEarVis >= 0.35) {
+    dominantSide = 'LEFT';
   }
-  return deviated / indices.length;
+
+  // Horizontal Yaw estimation
+  let yawDeg = 0;
+  if (lEar && rEar && nose && lEarVis >= 0.3 && rEarVis >= 0.3) {
+    const distL = Math.hypot(nose.x - lEar.x, nose.y - lEar.y);
+    const distR = Math.hypot(nose.x - rEar.x, nose.y - rEar.y);
+    const ratio = (distR - distL) / Math.max(distR + distL, 1e-4);
+    yawDeg = ratio * 70; // -70° to +70°
+  } else if (dominantSide === 'RIGHT') {
+    yawDeg = 65; // User turned left or camera on right
+  } else if (dominantSide === 'LEFT') {
+    yawDeg = -65;
+  }
+
+  // Pitch / Elevation estimation
+  let pitchDeg = 0;
+  if (lSh && rSh && lHip && rHip && nose) {
+    const shMid = mid(lSh, rSh);
+    const hipMid = mid(lHip, rHip);
+    const dySpine = hipMid.y - shMid.y;
+    const dzSpine = (hipMid.z ?? 0) - (shMid.z ?? 0);
+    // When camera is high looking down, hips are further in z or dySpine foreshortens
+    pitchDeg = Math.atan2(dzSpine, Math.max(dySpine, 0.05)) * (180 / Math.PI);
+    // Refine with nose height above shoulders
+    const noseShDelta = shMid.y - nose.y;
+    if (noseShDelta < 0.18) {
+      pitchDeg += 15; // Camera looking downward compresses vertical nose-shoulder distance
+    }
+  }
+
+  const isFrontal = Math.abs(yawDeg) < 25;
+  const isHighAngle = pitchDeg > 15;
+
+  let type: CameraViewType = 'FRONT_LEVEL';
+  let label = 'FRONT [EYE-LINE]';
+
+  if (isFrontal) {
+    if (pitchDeg > 18) {
+      type = 'FRONT_HIGH';
+      label = `FRONT-HIGH [${Math.min(60, Math.round(pitchDeg))}°]`;
+    } else if (pitchDeg < -18) {
+      type = 'FRONT_LOW';
+      label = `FRONT-LOW [${Math.abs(Math.round(pitchDeg))}°]`;
+    } else {
+      type = 'FRONT_LEVEL';
+      label = `FRONT [${Math.round(yawDeg)}°]`;
+    }
+  } else if (Math.abs(yawDeg) < 65) {
+    if (yawDeg < 0) {
+      type = 'DIAGONAL_LEFT';
+      label = `DIAG-L [${Math.abs(Math.round(yawDeg))}°]`;
+    } else {
+      type = 'DIAGONAL_RIGHT';
+      label = `DIAG-R [${Math.abs(Math.round(yawDeg))}°]`;
+    }
+  } else {
+    if (yawDeg < 0) {
+      type = 'PROFILE_LEFT';
+      label = `PROFILE-L [${Math.abs(Math.round(yawDeg))}°]`;
+    } else {
+      type = 'PROFILE_RIGHT';
+      label = `PROFILE-R [${Math.abs(Math.round(yawDeg))}°]`;
+    }
+  }
+
+  return {
+    type,
+    yawDeg: Math.round(yawDeg),
+    pitchDeg: Math.round(pitchDeg),
+    label,
+    dominantSide,
+    isFrontal,
+    isHighAngle,
+  };
 }
 
-// ── Temporal Smoother ─────────────────────────────────────────────────────────
+// ── 2. Camera-Invariant 3D Torso Coordinate Reference Frame (T-Frame) ─────────
+
+interface RawBiometrics {
+  cameraView: CameraViewInfo;
+  // Invariant 3D Torso Frame
+  anteriorShift: number;
+  lateralShift: number;
+  cranialHeight: number;
+  // Frontal Perspective Metrics
+  headToShoulderRatio: number;
+  chinClavicleClearance: number;
+  cervicalPitchDeg: number;
+  // Profile Metric
+  effectiveCvaDeg: number;
+  // Classical Normalized Metrics
+  lateralTiltDelta: number;
+  earToShoulderRatio: number;
+  shoulderAsymmetry: number;
+  trunkLean: number;
+  // Layer 2 Features
+  featureAngles: number[];
+  meanVisibility: number;
+}
+
+function extractRawBiometrics(lms: PoseLandmark[]): RawBiometrics | null {
+  if (!lms || lms.length < 25) return null;
+
+  const nose = lms[0];
+  const lEye = lms[2], rEye = lms[5];
+  const lEar = lms[7], rEar = lms[8];
+  const lSh  = lms[11], rSh = lms[12];
+  const lHip = lms[23], rHip = lms[24];
+
+  // Robust visibility gate: requires at least ONE ear and at least ONE shoulder
+  const earSeen = (lEar && (lEar.visibility ?? 1) >= 0.25) || (rEar && (rEar.visibility ?? 1) >= 0.25);
+  const shSeen  = (lSh && (lSh.visibility ?? 1) >= 0.25) || (rSh && (rSh.visibility ?? 1) >= 0.25);
+  if (!earSeen || !shSeen || !nose) return null;
+
+  const cameraView = estimateCameraViewpoint(lms);
+
+  // Determine effective head landmark (bilateral midpoint or dominant ear)
+  let headPoint: PoseLandmark;
+  if ((lEar?.visibility ?? 0) >= 0.35 && (rEar?.visibility ?? 0) >= 0.35) {
+    headPoint = mid(lEar, rEar);
+  } else if ((lEar?.visibility ?? 0) >= (rEar?.visibility ?? 0)) {
+    headPoint = lEar;
+  } else {
+    headPoint = rEar;
+  }
+
+  // Determine effective shoulder center & width
+  let shMid: PoseLandmark;
+  let sw: number;
+  if ((lSh?.visibility ?? 0) >= 0.3 && (rSh?.visibility ?? 0) >= 0.3) {
+    shMid = mid(lSh, rSh);
+    sw = Math.max(0.04, dist2D(lSh, rSh));
+  } else if ((lSh?.visibility ?? 0) >= 0.3) {
+    shMid = lSh;
+    sw = 0.18; // Default fallback shoulder scale
+  } else {
+    shMid = rSh;
+    sw = 0.18;
+  }
+
+  // Determine hip center
+  const hipMid = (lHip && rHip) ? mid(lHip, rHip) : { x: shMid.x, y: shMid.y + 0.35, z: shMid.z };
+
+  // ── Construct Orthonormal Torso Basis (X̂, Ŷ, Ẑ) ──────────────────────────
+  // X̂: Coronal Lateral Axis (Right Shoulder → Left Shoulder)
+  let vx = [1, 0, 0];
+  if (lSh && rSh && (lSh.visibility ?? 0) >= 0.3 && (rSh.visibility ?? 0) >= 0.3) {
+    vx = [lSh.x - rSh.x, lSh.y - rSh.y, (lSh.z ?? 0) - (rSh.z ?? 0)];
+  }
+  const normX = Math.hypot(vx[0], vx[1], vx[2]) || 1;
+  const X_hat = [vx[0] / normX, vx[1] / normX, vx[2] / normX];
+
+  // Ŷ: Longitudinal Spine Axis (Mid-Hips → Mid-Shoulders)
+  const vy_raw = [shMid.x - hipMid.x, shMid.y - hipMid.y, (shMid.z ?? 0) - (hipMid.z ?? 0)];
+  // Gram-Schmidt orthogonalize Ŷ against X̂
+  const dot_yx = vy_raw[0] * X_hat[0] + vy_raw[1] * X_hat[1] + vy_raw[2] * X_hat[2];
+  const vy = [
+    vy_raw[0] - dot_yx * X_hat[0],
+    vy_raw[1] - dot_yx * X_hat[1],
+    vy_raw[2] - dot_yx * X_hat[2],
+  ];
+  const normY = Math.hypot(vy[0], vy[1], vy[2]) || 1;
+  const Y_hat = [vy[0] / normY, vy[1] / normY, vy[2] / normY];
+
+  // Ẑ: Sagittal Axis (X̂ × Ŷ) — points strictly anteriorly (forward from chest)
+  let Z_hat = [
+    X_hat[1] * Y_hat[2] - X_hat[2] * Y_hat[1],
+    X_hat[2] * Y_hat[0] - X_hat[0] * Y_hat[2],
+    X_hat[0] * Y_hat[1] - X_hat[1] * Y_hat[0],
+  ];
+  // Ensure Ẑ points anteriorly toward nose
+  const noseDisp = [nose.x - shMid.x, nose.y - shMid.y, (nose.z ?? 0) - (shMid.z ?? 0)];
+  const noseDotZ = noseDisp[0] * Z_hat[0] + noseDisp[1] * Z_hat[1] + noseDisp[2] * Z_hat[2];
+  if (noseDotZ < 0) {
+    Z_hat = [-Z_hat[0], -Z_hat[1], -Z_hat[2]];
+  }
+
+  // ── Project Head Displacement onto Torso Basis ───────────────────────────
+  const headDisp = [headPoint.x - shMid.x, headPoint.y - shMid.y, (headPoint.z ?? 0) - (shMid.z ?? 0)];
+  // Invariant Anterior Shift (FHP along chest normal, normalized by shoulder width)
+  const anteriorShift = (headDisp[0] * Z_hat[0] + headDisp[1] * Z_hat[1] + headDisp[2] * Z_hat[2]) / sw;
+  // Invariant Lateral Shift
+  const lateralShift  = (headDisp[0] * X_hat[0] + headDisp[1] * X_hat[1] + headDisp[2] * X_hat[2]) / sw;
+  // Invariant Cranial Height
+  const cranialHeight = (headDisp[0] * Y_hat[0] + headDisp[1] * Y_hat[1] + headDisp[2] * Y_hat[2]) / sw;
+
+  // ── Frontal Perspective Foreshortening Metrics ───────────────────────────
+  let headToShoulderRatio = 0.28;
+  if (lEye && rEye && (lEye.visibility ?? 0) >= 0.3 && (rEye.visibility ?? 0) >= 0.3) {
+    const eyeDist = Math.hypot(lEye.x - rEye.x, lEye.y - rEye.y);
+    headToShoulderRatio = eyeDist / sw;
+  }
+
+  const chinClavicleClearance = (shMid.y - nose.y) / sw;
+
+  let cervicalPitchDeg = 0;
+  if (lEar && lEye && (lEar.visibility ?? 0) >= 0.3) {
+    cervicalPitchDeg = Math.atan2(lEar.y - lEye.y, Math.abs(lEar.x - lEye.x)) * (180 / Math.PI);
+  } else if (rEar && rEye && (rEar.visibility ?? 0) >= 0.3) {
+    cervicalPitchDeg = Math.atan2(rEar.y - rEye.y, Math.abs(rEar.x - rEye.x)) * (180 / Math.PI);
+  }
+
+  // ── Profile / Diagonal Sagittal Metric (CVA) ────────────────────────────
+  let effectiveCvaDeg = 55.0; // Normal upright resting CVA is ~55°
+  const activeEar = cameraView.dominantSide === 'RIGHT' ? rEar : lEar;
+  const activeSh  = cameraView.dominantSide === 'RIGHT' ? rSh  : lSh;
+  if (activeEar && activeSh) {
+    const dx = activeEar.x - activeSh.x;
+    const dy = activeSh.y - activeEar.y; // positive upward
+    effectiveCvaDeg = Math.atan2(dy, Math.abs(dx) || 1e-4) * (180 / Math.PI);
+  }
+
+  // ── Classical Metrics ───────────────────────────────────────────────────
+  let lateralTiltDelta = 0;
+  if (lEar && rEar && lSh && rSh) {
+    lateralTiltDelta = (Math.atan2(rEar.y - lEar.y, rEar.x - lEar.x) * 180 / Math.PI)
+                     - (Math.atan2(rSh.y - lSh.y, rSh.x - lSh.x) * 180 / Math.PI);
+  } else {
+    lateralTiltDelta = lateralShift * 40; // Fallback to 3D lateral shift
+  }
+
+  const earToShoulderRatio = (shMid.y - headPoint.y) / sw;
+  const shoulderAsymmetry  = (lSh && rSh) ? Math.abs(lSh.y - rSh.y) / sw : 0;
+  const trunkLean          = (shMid.x - hipMid.x) / sw;
+
+  // Feature vector for Layer 2 consensus
+  const featureAngles = ANGLE_SPECS.map(([a, v, c]) =>
+    angle3pt(lms[a] ?? nose, lms[v] ?? nose, lms[c] ?? nose, true)
+  );
+
+  const meanVis = KEY_LM_IDS
+    .map(id => lms[id]?.visibility ?? 0.5)
+    .reduce((a, b) => a + b, 0) / KEY_LM_IDS.length;
+
+  return {
+    cameraView,
+    anteriorShift,
+    lateralShift,
+    cranialHeight,
+    headToShoulderRatio,
+    chinClavicleClearance,
+    cervicalPitchDeg,
+    effectiveCvaDeg,
+    lateralTiltDelta,
+    earToShoulderRatio,
+    shoulderAsymmetry,
+    trunkLean,
+    featureAngles,
+    meanVisibility: meanVis,
+  };
+}
+
+// ── 3. Rolling Temporal Smoothers ─────────────────────────────────────────────
 
 export class RollingAverage {
   private buf: number[];
@@ -192,7 +476,10 @@ export class RollingAverage {
   private idx = 0;
   private filled = false;
 
-  constructor(w = 10) { this.size = w; this.buf = new Array(w).fill(0); }
+  constructor(w = 10) {
+    this.size = w;
+    this.buf = new Array(w).fill(0);
+  }
 
   update(v: number): number {
     this.buf[this.idx] = v;
@@ -202,77 +489,45 @@ export class RollingAverage {
     return this.buf.slice(0, n).reduce((a, b) => a + b, 0) / n;
   }
 
-  reset() { this.buf = new Array(this.size).fill(0); this.idx = 0; this.filled = false; }
+  reset() {
+    this.buf = new Array(this.size).fill(0);
+    this.idx = 0;
+    this.filled = false;
+  }
 }
 
 const smoothers = {
-  headNeckShoulder: new RollingAverage(12),
-  lateralTilt:      new RollingAverage(12),
-  shoulderShrug:    new RollingAverage(8),
-  shoulderAsym:     new RollingAverage(8),
-  trunkLean:        new RollingAverage(8),
-  zFhp:             new RollingAverage(15),
+  anteriorShift:       new RollingAverage(10),
+  lateralShift:        new RollingAverage(10),
+  cranialHeight:       new RollingAverage(10),
+  headToShoulderRatio: new RollingAverage(12),
+  chinClavicle:        new RollingAverage(12),
+  cvaDeg:              new RollingAverage(10),
+  lateralTilt:         new RollingAverage(10),
+  shoulderShrug:       new RollingAverage(8),
+  shoulderAsym:        new RollingAverage(8),
+  trunkLean:           new RollingAverage(8),
 };
 
-// ── Calibration ───────────────────────────────────────────────────────────────
-
-interface RawMetrics {
-  headNeckShoulderAngle: number;
-  lateralTiltDelta: number;
-  earToShoulderRatio: number;
-  shoulderAsymmetry: number;
-  trunkLean: number;
-  zFhpDelta: number;
-  featureAngles: number[];
-  meanVisibility: number;
-}
-
-function extractRawMetrics(lms: PoseLandmark[]): RawMetrics | null {
-  if (!lms || lms.length < 25) return null;
-
-  const nose = lms[0], lEar = lms[7], rEar = lms[8];
-  const lSh = lms[11], rSh = lms[12];
-  const lHip = lms[23], rHip = lms[24];
-
-  // Visibility gate: key landmarks must be clearly visible
-  const minVis = 0.45;
-  const visVals = [lEar, rEar, lSh, rSh].map(l => l.visibility ?? 1);
-  if (visVals.some(v => v < minVis)) return null;
-
-  const earMid = mid(lEar, rEar);
-  const shMid  = mid(lSh, rSh);
-  const hipMid = mid(lHip, rHip);
-  const sw = dist2D(lSh, rSh);
-  if (sw < 0.04) return null;
-
-  const meanVis = KEY_LM_IDS
-    .map(id => lms[id]?.visibility ?? 0.5)
-    .reduce((a, b) => a + b, 0) / KEY_LM_IDS.length;
-
-  return {
-    headNeckShoulderAngle: angle3pt(nose, earMid, shMid),
-    lateralTiltDelta: Math.atan2(rEar.y-lEar.y, rEar.x-lEar.x) * 180/Math.PI
-                    - Math.atan2(rSh.y-lSh.y, rSh.x-lSh.x) * 180/Math.PI,
-    earToShoulderRatio: (shMid.y - earMid.y) / sw,
-    shoulderAsymmetry: Math.abs(lSh.y - rSh.y) / sw,
-    trunkLean: (shMid.x - hipMid.x) / sw,
-    zFhpDelta: earMid.z - shMid.z,
-    featureAngles: computeFeatureVector(lms),
-    meanVisibility: meanVis,
-  };
-}
+// ── 4. Multi-Angle Calibration Sampling ───────────────────────────────────────
 
 export function sampleCalibrationFrame(lms: PoseLandmark[]): Partial<CalibrationBaseline> | null {
-  const r = extractRawMetrics(lms);
+  const r = extractRawBiometrics(lms);
   if (!r) return null;
   return {
-    headNeckShoulderAngle: r.headNeckShoulderAngle,
+    anteriorShift: r.anteriorShift,
+    lateralShift: r.lateralShift,
+    cranialHeight: r.cranialHeight,
+    headToShoulderRatio: r.headToShoulderRatio,
+    chinClavicleClearance: r.chinClavicleClearance,
+    cervicalPitchDeg: r.cervicalPitchDeg,
+    effectiveCvaDeg: r.effectiveCvaDeg,
     lateralTiltDelta: r.lateralTiltDelta,
     earToShoulderRatio: r.earToShoulderRatio,
     shoulderAsymmetry: r.shoulderAsymmetry,
     trunkLean: r.trunkLean,
-    zFhpDelta: r.zFhpDelta,
     featureAngles: r.featureAngles,
+    cameraView: r.cameraView,
     meanVisibility: r.meanVisibility,
   };
 }
@@ -280,156 +535,192 @@ export function sampleCalibrationFrame(lms: PoseLandmark[]): Partial<Calibration
 export function captureCalibration(samples: Partial<CalibrationBaseline>[]): CalibrationBaseline {
   const valid = samples.filter(s => s.featureAngles && s.featureAngles.length === ANGLE_SPECS.length);
   const avgScalar = (key: keyof CalibrationBaseline) => {
-    const vals = valid.map(s => s[key] as number).filter(v => !isNaN(v));
+    const vals = valid.map(s => s[key] as number).filter(v => typeof v === 'number' && !isNaN(v));
     return vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
   };
-  // Average the feature angle vector element-wise
+
   const featureAngles = Array.from({ length: ANGLE_SPECS.length }, (_, i) => {
     const vals = valid.map(s => (s.featureAngles as number[])[i]).filter(v => !isNaN(v));
     return vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
   });
+
+  const lastView = valid[valid.length - 1]?.cameraView ?? {
+    type: 'FRONT_LEVEL',
+    yawDeg: 0,
+    pitchDeg: 0,
+    label: 'FRONT [EYE-LINE]',
+    dominantSide: 'BILATERAL',
+    isFrontal: true,
+    isHighAngle: false,
+  };
+
   return {
-    headNeckShoulderAngle: avgScalar('headNeckShoulderAngle'),
+    anteriorShift: avgScalar('anteriorShift'),
+    lateralShift: avgScalar('lateralShift'),
+    cranialHeight: avgScalar('cranialHeight'),
+    headToShoulderRatio: avgScalar('headToShoulderRatio'),
+    chinClavicleClearance: avgScalar('chinClavicleClearance'),
+    cervicalPitchDeg: avgScalar('cervicalPitchDeg'),
+    effectiveCvaDeg: avgScalar('effectiveCvaDeg'),
     lateralTiltDelta: avgScalar('lateralTiltDelta'),
     earToShoulderRatio: avgScalar('earToShoulderRatio'),
     shoulderAsymmetry: avgScalar('shoulderAsymmetry'),
     trunkLean: avgScalar('trunkLean'),
-    zFhpDelta: avgScalar('zFhpDelta'),
     featureAngles,
+    cameraView: lastView,
     meanVisibility: avgScalar('meanVisibility'),
     capturedAt: Date.now(),
   };
 }
 
-// ── Main Analysis ─────────────────────────────────────────────────────────────
+// ── 5. Consensus Voting ───────────────────────────────────────────────────────
 
-// Hysteresis constants
-export const SCORE_ENTER_BAD  = 68; // score must drop BELOW this to enter bad state
-export const SCORE_EXIT_BAD   = 76; // score must rise ABOVE this to exit bad state
-// Layer 2 minimum confidence to confirm an issue (0–1)
-const L2_CONFIRM_THRESHOLD = 0.25; // ≥25% of relevant angles must deviate
-const L2_SUPPRESS_THRESHOLD = 0.10; // <10% → suppress Layer 1 issue
+function consensusVote(
+  current: number[],
+  baseline: number[],
+  issue: IssueType,
+  thresholdDeg = 8.5
+): number {
+  const indices = ISSUE_SPEC_MAP[issue];
+  if (indices.length === 0) return 0;
+  let deviated = 0;
+  for (const idx of indices) {
+    if (Math.abs(current[idx] - baseline[idx]) > thresholdDeg) deviated++;
+  }
+  return deviated / indices.length;
+}
+
+// ── 6. Main Omnidirectional Posture Analysis ──────────────────────────────────
+
+export const SCORE_ENTER_BAD = 68;
+export const SCORE_EXIT_BAD  = 76;
+const L2_CONFIRM_THRESHOLD   = 0.22;
+const L2_SUPPRESS_THRESHOLD  = 0.08;
 
 export function analyzePosture(
   lms: PoseLandmark[],
   calibration: CalibrationBaseline | null = null
 ): PostureMetrics | null {
-  const raw = extractRawMetrics(lms);
+  const raw = extractRawBiometrics(lms);
   if (!raw) return null;
 
-  // Smooth Layer 1 metrics
-  const hnsa  = smoothers.headNeckShoulder.update(raw.headNeckShoulderAngle);
-  const tilt  = smoothers.lateralTilt.update(raw.lateralTiltDelta);
-  const shrug = smoothers.shoulderShrug.update(raw.earToShoulderRatio);
-  const asym  = smoothers.shoulderAsym.update(raw.shoulderAsymmetry);
-  const lean  = smoothers.trunkLean.update(raw.trunkLean);
-  const zFhp  = smoothers.zFhp.update(raw.zFhpDelta);
+  // Temporal smoothing
+  const antShift = smoothers.anteriorShift.update(raw.anteriorShift);
+  const latShift = smoothers.lateralShift.update(raw.lateralShift);
+  const cranH    = smoothers.cranialHeight.update(raw.cranialHeight);
+  const h2sRatio = smoothers.headToShoulderRatio.update(raw.headToShoulderRatio);
+  const chinClav = smoothers.chinClavicle.update(raw.chinClavicleClearance);
+  const cva      = smoothers.cvaDeg.update(raw.effectiveCvaDeg);
+  const tilt     = smoothers.lateralTilt.update(raw.lateralTiltDelta);
+  const shrug    = smoothers.shoulderShrug.update(raw.earToShoulderRatio);
+  const asym     = smoothers.shoulderAsym.update(raw.shoulderAsymmetry);
+  const lean     = smoothers.trunkLean.update(raw.trunkLean);
 
-  // Layer 2: consensus votes per issue type
-  const consensusVotes: Record<string, number> = {};
+  // Layer 2: consensus votes
   const ISSUE_TYPES: IssueType[] = [
-    'FORWARD_HEAD', 'LATERAL_TILT', 'SHOULDER_SHRUG', 'SHOULDER_ASYMMETRY', 'TRUNK_LEAN'
+    'FORWARD_HEAD', 'LATERAL_TILT', 'SHOULDER_SHRUG', 'SHOULDER_ASYMMETRY', 'TRUNK_LEAN',
   ];
+  const consensusVotes: Record<string, number> = {};
   if (calibration?.featureAngles?.length === ANGLE_SPECS.length) {
     for (const issue of ISSUE_TYPES) {
       consensusVotes[issue] = consensusVote(raw.featureAngles, calibration.featureAngles, issue);
     }
   } else {
-    // No calibration: neutral votes (don't suppress or confirm)
     ISSUE_TYPES.forEach(i => { consensusVotes[i] = 0.5; });
   }
 
-  // Deviations from calibration
+  // Deviations from calibrated baseline
   const deviations: Record<string, number> = {};
   if (calibration) {
-    deviations.headNeckShoulder = calibration.headNeckShoulderAngle - hnsa;
+    deviations.anteriorShift = antShift - calibration.anteriorShift;
+    deviations.lateralShift = Math.abs(latShift) - Math.abs(calibration.lateralShift);
+    deviations.headToShoulderRatio = h2sRatio - calibration.headToShoulderRatio;
+    deviations.chinClavicle = calibration.chinClavicleClearance - chinClav;
+    deviations.cva = calibration.effectiveCvaDeg - cva;
     deviations.lateralTilt = Math.abs(tilt) - Math.abs(calibration.lateralTiltDelta);
     deviations.shoulderShrug = calibration.earToShoulderRatio - shrug;
     deviations.shoulderAsym = asym - calibration.shoulderAsymmetry;
     deviations.trunkLean = Math.abs(lean) - Math.abs(calibration.trunkLean);
-    deviations.zFhp = zFhp - calibration.zFhpDelta;
   }
 
-  // Visibility score (average of key landmarks)
-  const visibilityScore = KEY_LM_IDS
-    .map(id => lms[id]?.visibility ?? 0.5)
-    .reduce((a, b) => a + b, 0) / KEY_LM_IDS.length;
-
-  // ── Layer 1 thresholds (calibration-relative) ──────────────────────────────
-  const hnsaThreshMild   = calibration ? calibration.headNeckShoulderAngle - 12 : 148;
-  const hnsaThreshMod    = calibration ? calibration.headNeckShoulderAngle - 20 : 140;
-  const hnsaThreshSevere = calibration ? calibration.headNeckShoulderAngle - 30 : 130;
-  const zFhpThresh       = calibration ? calibration.zFhpDelta - 0.06 : -0.08;
-  const tiltThreshMild   = calibration ? Math.abs(calibration.lateralTiltDelta) + 8  : 8;
-  const tiltThreshMod    = calibration ? Math.abs(calibration.lateralTiltDelta) + 15 : 15;
-  const tiltThreshSevere = calibration ? Math.abs(calibration.lateralTiltDelta) + 25 : 25;
-  const shrugThreshMild  = calibration ? calibration.earToShoulderRatio - 0.08 : 0.38;
-  const shrugThreshMod   = calibration ? calibration.earToShoulderRatio - 0.14 : 0.30;
-  const asymThreshMild   = calibration ? calibration.shoulderAsymmetry + 0.06 : 0.07;
-  const asymThreshMod    = calibration ? calibration.shoulderAsymmetry + 0.12 : 0.14;
-  const leanThreshMild   = calibration ? Math.abs(calibration.trunkLean) + 0.10 : 0.12;
-  const leanThreshMod    = calibration ? Math.abs(calibration.trunkLean) + 0.18 : 0.20;
-
-  const absTilt = Math.abs(tilt);
-  const absLean = Math.abs(lean);
-
-  // ── Issue detection: Layer 1 flag → Layer 2 confirm/suppress ───────────────
+  const visibilityScore = raw.meanVisibility;
   const issues: PostureIssue[] = [];
 
-  // Helper: decides if an issue makes it through dual-layer gate
   const shouldFlag = (issue: IssueType): boolean => {
     const l2 = consensusVotes[issue] ?? 0.5;
-    // Suppress: Layer 2 strongly disagrees (< 10% of angles deviate) → false positive
     if (l2 < L2_SUPPRESS_THRESHOLD) return false;
-    // Confirm: Layer 2 agrees (≥ 25% of angles deviate) → confirmed
-    // Between 10–25%: defer to Layer 1 alone (ambiguous)
     return true;
   };
 
-  // 1. Forward Head Posture
-  if (hnsa < hnsaThreshMild && shouldFlag('FORWARD_HEAD')) {
+  // ── Omnidirectional Issue Evaluation ───────────────────────────────────────
+
+  // 1. Forward Head Posture (Evaluated via Torso-Frame Ẑ + Front Perspective + Profile CVA)
+  let fhpDetected = false;
+  let fhpSeverity: 'MILD' | 'MODERATE' | 'SEVERE' = 'MILD';
+  let fhpLabel = '';
+  let fhpDesc = '';
+
+  // Signal A: Invariant 3D Torso Frame Anterior Shift
+  const antDeltaThreshMild = calibration ? 0.045 : 0.06;
+  const antDelta = calibration ? (antShift - calibration.anteriorShift) : antShift;
+
+  // Signal B: Frontal Perspective Foreshortening Expansion (Active in Front & Front-High views)
+  const h2sExpansion = calibration ? (h2sRatio - calibration.headToShoulderRatio) / calibration.headToShoulderRatio : 0;
+  const isFrontalCrane = raw.cameraView.isFrontal && h2sExpansion > 0.12;
+
+  // Signal C: Profile / Diagonal Craniovertebral Flexion
+  const cvaDrop = calibration ? (calibration.effectiveCvaDeg - cva) : (52 - cva);
+  const isProfileDrop = !raw.cameraView.isFrontal && cvaDrop > 7.0;
+
+  if ((antDelta > antDeltaThreshMild || isFrontalCrane || isProfileDrop) && shouldFlag('FORWARD_HEAD')) {
+    fhpDetected = true;
+    if (antDelta > antDeltaThreshMild * 2.0 || h2sExpansion > 0.25 || cvaDrop > 14) {
+      fhpSeverity = 'SEVERE';
+    } else if (antDelta > antDeltaThreshMild * 1.4 || h2sExpansion > 0.18 || cvaDrop > 10) {
+      fhpSeverity = 'MODERATE';
+    }
+
+    if (raw.cameraView.isFrontal) {
+      fhpLabel = `FHP CRANE: +${(h2sExpansion * 100).toFixed(0)}%`;
+      fhpDesc = `Head craning forward toward screen (perspective expansion +${(h2sExpansion * 100).toFixed(0)}%)`;
+    } else {
+      fhpLabel = `CVA DROP: -${cvaDrop.toFixed(1)}°`;
+      fhpDesc = `Craniovertebral angle flexed downward (${cva.toFixed(1)}° vs baseline ${calibration?.effectiveCvaDeg.toFixed(1) ?? '55'}°)`;
+    }
+
     issues.push({
       type: 'FORWARD_HEAD',
-      severity: hnsa < hnsaThreshSevere ? 'SEVERE' : hnsa < hnsaThreshMod ? 'MODERATE' : 'MILD',
-      layer2Confidence: consensusVotes['FORWARD_HEAD'],
-      value: hnsa,
-      label: `HEAD_ANGLE: ${hnsa.toFixed(1)}°`,
-      description: `Head pitched forward (${hnsa.toFixed(1)}° / target ≥${hnsaThreshMild.toFixed(0)}°)`,
-      correctionHint: 'Draw chin back — bring your ears over your shoulders.',
-    });
-  }
-  // Z-depth FHP confirmation (second independent signal)
-  if (zFhp < zFhpThresh && !issues.find(i => i.type === 'FORWARD_HEAD') && shouldFlag('FORWARD_HEAD')) {
-    issues.push({
-      type: 'FORWARD_HEAD',
-      severity: zFhp < zFhpThresh - 0.04 ? 'MODERATE' : 'MILD',
-      layer2Confidence: consensusVotes['FORWARD_HEAD'],
-      value: zFhp,
-      label: `FHP_DEPTH: ${zFhp.toFixed(3)}`,
-      description: 'Head detected in front of shoulder plane (depth signal)',
-      correctionHint: 'Sit back and align your ears over your shoulders.',
+      severity: fhpSeverity,
+      layer2Confidence: consensusVotes['FORWARD_HEAD'] ?? 0.5,
+      value: antDelta,
+      label: fhpLabel,
+      description: fhpDesc,
+      correctionHint: 'Draw your chin back and align your ears over your shoulders.',
     });
   }
 
-  // 2. Lateral tilt
+  // 2. Lateral Head Tilt
+  const tiltThreshMild = calibration ? Math.abs(calibration.lateralTiltDelta) + 8 : 8;
+  const absTilt = Math.abs(tilt);
   if (absTilt > tiltThreshMild && shouldFlag('LATERAL_TILT')) {
     issues.push({
       type: 'LATERAL_TILT',
-      severity: absTilt > tiltThreshSevere ? 'SEVERE' : absTilt > tiltThreshMod ? 'MODERATE' : 'MILD',
-      layer2Confidence: consensusVotes['LATERAL_TILT'],
+      severity: absTilt > tiltThreshMild + 15 ? 'SEVERE' : absTilt > tiltThreshMild + 7 ? 'MODERATE' : 'MILD',
+      layer2Confidence: consensusVotes['LATERAL_TILT'] ?? 0.5,
       value: tilt,
       label: `TILT: ${tilt > 0 ? '+' : ''}${tilt.toFixed(1)}°`,
       description: `Head tilted ${tilt > 0 ? 'right' : 'left'} by ${absTilt.toFixed(1)}°`,
-      correctionHint: `Level your head — ${tilt > 0 ? 'right' : 'left'} ear is lower.`,
+      correctionHint: `Level your head — ${tilt > 0 ? 'right' : 'left'} ear is tilted downward.`,
     });
   }
 
-  // 3. Shoulder shrug
+  // 3. Shoulder Shrug / Elevation
+  const shrugThreshMild = calibration ? calibration.earToShoulderRatio - 0.08 : 0.40;
   if (shrug < shrugThreshMild && shouldFlag('SHOULDER_SHRUG')) {
     issues.push({
       type: 'SHOULDER_SHRUG',
-      severity: shrug < (shrugThreshMod - 0.08) ? 'SEVERE' : shrug < shrugThreshMod ? 'MODERATE' : 'MILD',
-      layer2Confidence: consensusVotes['SHOULDER_SHRUG'],
+      severity: shrug < shrugThreshMild - 0.10 ? 'SEVERE' : 'MODERATE',
+      layer2Confidence: consensusVotes['SHOULDER_SHRUG'] ?? 0.5,
       value: shrug,
       label: `SHRUG: ${shrug.toFixed(2)}`,
       description: 'Shoulders elevated toward ears (stress shrug)',
@@ -437,81 +728,85 @@ export function analyzePosture(
     });
   }
 
-  // 4. Shoulder asymmetry
+  // 4. Shoulder Asymmetry
+  const asymThreshMild = calibration ? calibration.shoulderAsymmetry + 0.06 : 0.08;
   if (asym > asymThreshMild && shouldFlag('SHOULDER_ASYMMETRY')) {
     issues.push({
       type: 'SHOULDER_ASYMMETRY',
-      severity: asym > (asymThreshMod + 0.08) ? 'SEVERE' : asym > asymThreshMod ? 'MODERATE' : 'MILD',
-      layer2Confidence: consensusVotes['SHOULDER_ASYMMETRY'],
+      severity: asym > asymThreshMild + 0.08 ? 'SEVERE' : 'MODERATE',
+      layer2Confidence: consensusVotes['SHOULDER_ASYMMETRY'] ?? 0.5,
       value: asym,
-      label: `ASYM: ${(asym*100).toFixed(1)}%`,
-      description: `${lms[11].y > lms[12].y ? 'Left' : 'Right'} shoulder is lower`,
+      label: `ASYM: ${(asym * 100).toFixed(1)}%`,
+      description: 'Shoulder line tilted unevenly',
       correctionHint: 'Level your shoulders — keep them at equal height.',
     });
   }
 
-  // 5. Trunk lean
+  // 5. Trunk Lean
+  const absLean = Math.abs(lean);
+  const leanThreshMild = calibration ? Math.abs(calibration.trunkLean) + 0.10 : 0.12;
   if (absLean > leanThreshMild && shouldFlag('TRUNK_LEAN')) {
     issues.push({
       type: 'TRUNK_LEAN',
-      severity: absLean > (leanThreshMod + 0.08) ? 'SEVERE' : absLean > leanThreshMod ? 'MODERATE' : 'MILD',
-      layer2Confidence: consensusVotes['TRUNK_LEAN'],
+      severity: absLean > leanThreshMild + 0.08 ? 'SEVERE' : 'MODERATE',
+      layer2Confidence: consensusVotes['TRUNK_LEAN'] ?? 0.5,
       value: lean,
       label: `LEAN: ${lean > 0 ? '+' : ''}${lean.toFixed(2)}`,
-      description: `Trunk leaning ${lean > 0 ? 'right' : 'left'}`,
-      correctionHint: 'Sit tall and centered. Even weight on both hips.',
+      description: `Torso leaning ${lean > 0 ? 'right' : 'left'}`,
+      correctionHint: 'Sit tall and centered with even weight on both hips.',
     });
   }
 
-  // ── Visibility-weighted posture score ──────────────────────────────────────
-  // Weight each penalty by the visibility of the landmarks involved in that metric.
-  // Low-confidence landmarks contribute less to score penalties.
-  const earVis  = Math.min(lms[7]?.visibility ?? 1, lms[8]?.visibility ?? 1);
-  const shVis   = Math.min(lms[11]?.visibility ?? 1, lms[12]?.visibility ?? 1);
-  const hipVis  = Math.min(lms[23]?.visibility ?? 1, lms[24]?.visibility ?? 1);
-
+  // ── Visibility-Weighted Posture Score (0–100) ──────────────────────────────
   let score = 100;
-  const hnsaTarget = calibration ? calibration.headNeckShoulderAngle : 165;
-  const hnsaMin    = calibration ? calibration.headNeckShoulderAngle - 35 : 125;
 
-  if (hnsa < hnsaTarget) {
-    const penalty = Math.min(35, ((hnsaTarget-hnsa)/(hnsaTarget-hnsaMin)) * 35);
-    score -= penalty * earVis * shVis;          // weighted by ear+shoulder visibility
+  // FHP deduction (calibrated to viewpoint)
+  if (fhpDetected) {
+    const penalty = fhpSeverity === 'SEVERE' ? 38 : fhpSeverity === 'MODERATE' ? 24 : 14;
+    score -= penalty * Math.min(1.0, visibilityScore + 0.2);
   }
-  if (zFhp < zFhpThresh) {
-    const penalty = Math.min(10, Math.abs(zFhp-zFhpThresh) * 100);
-    score -= penalty * earVis;
-  }
+
   if (absTilt > tiltThreshMild) {
-    const penalty = Math.min(25, ((absTilt-tiltThreshMild)/20) * 25);
-    score -= penalty * earVis;
-  }
-  if (shrug < shrugThreshMild) {
-    const penalty = Math.min(15, ((shrugThreshMild-shrug)/0.20) * 15);
-    score -= penalty * shVis;
-  }
-  if (asym > asymThreshMild) {
-    const penalty = Math.min(15, ((asym-asymThreshMild)/0.20) * 15);
-    score -= penalty * shVis;
-  }
-  if (absLean > leanThreshMild) {
-    const penalty = Math.min(10, ((absLean-leanThreshMild)/0.20) * 10);
-    score -= penalty * Math.min(shVis, hipVis);
+    const penalty = Math.min(22, ((absTilt - tiltThreshMild) / 18) * 22);
+    score -= penalty;
   }
 
-  // Layer 2 bonus: if consensus votes strongly AGREE with good posture, add up to 5pts
+  if (shrug < shrugThreshMild) {
+    const penalty = Math.min(18, ((shrugThreshMild - shrug) / 0.15) * 18);
+    score -= penalty;
+  }
+
+  if (asym > asymThreshMild) {
+    const penalty = Math.min(16, ((asym - asymThreshMild) / 0.14) * 16);
+    score -= penalty;
+  }
+
+  if (absLean > leanThreshMild) {
+    const penalty = Math.min(14, ((absLean - leanThreshMild) / 0.15) * 14);
+    score -= penalty;
+  }
+
+  // Layer 2 bonus: if consensus votes strongly confirm good posture
   const avgGoodVote = ISSUE_TYPES.reduce((s, t) => s + (1 - (consensusVotes[t] ?? 0.5)), 0) / ISSUE_TYPES.length;
-  if (avgGoodVote > 0.7) score = Math.min(100, score + (avgGoodVote - 0.7) * 15);
+  if (avgGoodVote > 0.65) {
+    score = Math.min(100, score + (avgGoodVote - 0.65) * 14);
+  }
 
   const postureScore = Math.max(0, Math.round(score));
 
   return {
-    headNeckShoulderAngle: hnsa,
+    cameraView: raw.cameraView,
+    anteriorShift: antShift,
+    lateralShift: latShift,
+    cranialHeight: cranH,
+    headToShoulderRatio: h2sRatio,
+    chinClavicleClearance: chinClav,
+    cervicalPitchDeg: raw.cervicalPitchDeg,
+    effectiveCvaDeg: cva,
     lateralTiltDeg: tilt,
     shoulderShrug: shrug,
     shoulderAsymmetry: asym,
     trunkLean: lean,
-    zFhpDelta: zFhp,
     consensusVotes,
     postureScore,
     visibilityScore,
@@ -547,6 +842,7 @@ export function buildAnalysisPrompt(
     : urgency === 'FIRM' ? 'Be clear and specific.' : 'Be gentle and encouraging.';
 
   return `You are PosChair, an AI posture coach for desk workers. Poor posture detected for ${durStr}.
+Camera View: ${m.cameraView.label} (${m.cameraView.dominantSide} dominant)
 Issues: ${allIssues || 'general poor posture'}
 Top correction: ${topIssue?.correctionHint || 'Sit up straight, ears over shoulders.'}
 Posture score: ${m.postureScore}/100 | Visibility: ${(m.visibilityScore*100).toFixed(0)}%

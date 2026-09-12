@@ -692,7 +692,7 @@ export default function PosChair() {
             </div>
             <div className="header-badge">
               <span className="rec-dot" style={{ display: 'inline-block', marginRight: 6 }} />
-              LIVE 720P
+              {metrics?.cameraView?.label ?? 'LIVE 720P'}
             </div>
           </div>
 
@@ -828,16 +828,20 @@ export default function PosChair() {
           <div className="telemetry-grid">
             {metrics ? (
               <>
-                {/* 1. Head Angle */}
+                {/* 1. Head Alignment (Front Perspective Crane or Profile CVA) */}
                 <div className="telemetry-tile">
                   <div className="tile-header">
-                    <span>Head Angle</span>
-                    <span style={{ fontSize: 11 }}>FHP</span>
+                    <span>Head Alignment</span>
+                    <span style={{ fontSize: 11 }}>{metrics.cameraView.isFrontal ? 'FRONT' : 'PROFILE'}</span>
                   </div>
-                  <div className={`tile-value ${metrics.headNeckShoulderAngle < 140 ? 'bad' : metrics.headNeckShoulderAngle < 152 ? 'warn' : 'ok'}`}>
-                    {metrics.headNeckShoulderAngle.toFixed(1)}°
+                  <div className={`tile-value ${metrics.anteriorShift > 0.09 ? 'bad' : metrics.anteriorShift > 0.05 ? 'warn' : 'ok'}`}>
+                    {metrics.cameraView.isFrontal
+                      ? `+${Math.max(0, Math.round(((metrics.headToShoulderRatio - (calibration?.headToShoulderRatio ?? metrics.headToShoulderRatio)) / ((calibration?.headToShoulderRatio ?? metrics.headToShoulderRatio) || 1)) * 100))}%`
+                      : `${metrics.effectiveCvaDeg.toFixed(1)}°`}
                   </div>
-                  <div className="tile-sub">Target: &gt; 152.0°</div>
+                  <div className="tile-sub">
+                    {metrics.cameraView.isFrontal ? 'Perspective Crane' : 'CVA (Target >53°)'}
+                  </div>
                 </div>
 
                 {/* 2. Lateral Tilt */}
@@ -888,28 +892,28 @@ export default function PosChair() {
                   <div className="tile-sub">Target: &lt; 0.12</div>
                 </div>
 
-                {/* 6. Z-Depth FHP */}
+                {/* 6. Invariant 3D Torso Anterior Shift */}
                 <div className="telemetry-tile">
                   <div className="tile-header">
-                    <span>Z-Depth Shift</span>
-                    <span style={{ fontSize: 11 }}>3D Sagittal</span>
+                    <span>Torso 3D Shift</span>
+                    <span style={{ fontSize: 11 }}>T-Frame Ẑ</span>
                   </div>
-                  <div className={`tile-value ${metrics.zFhpDelta < -0.10 ? 'bad' : metrics.zFhpDelta < -0.06 ? 'warn' : 'ok'}`}>
-                    {metrics.zFhpDelta.toFixed(3)}
+                  <div className={`tile-value ${metrics.anteriorShift > 0.09 ? 'bad' : metrics.anteriorShift > 0.05 ? 'warn' : 'ok'}`}>
+                    {metrics.anteriorShift > 0 ? '+' : ''}{metrics.anteriorShift.toFixed(3)}
                   </div>
-                  <div className="tile-sub">Depth plane delta</div>
+                  <div className="tile-sub">Invariant Sagittal Shift</div>
                 </div>
 
                 {/* 7. Landmark Visibility */}
                 <div className="telemetry-tile">
                   <div className="tile-header">
-                    <span>Visibility</span>
+                    <span>Signal Quality</span>
                     <Eye size={14} style={{ color: 'var(--pop-cyan)' }} />
                   </div>
                   <div className={`tile-value ${metrics.visibilityScore > 0.75 ? 'ok' : metrics.visibilityScore > 0.50 ? 'warn' : 'bad'}`}>
                     {(metrics.visibilityScore * 100).toFixed(0)}%
                   </div>
-                  <div className="tile-sub">Keypoint signal quality</div>
+                  <div className="tile-sub">{metrics.cameraView.label}</div>
                 </div>
 
                 {/* 8. Calibration Delta */}
@@ -922,7 +926,7 @@ export default function PosChair() {
                     {calibration ? 'MATCHED' : 'UNSET'}
                   </div>
                   <div className="tile-sub">
-                    {calibration ? '252-Angle baseline locked' : 'Run 5s calibration'}
+                    {calibration ? 'Omni 3D baseline locked' : 'Run 5s calibration'}
                   </div>
                 </div>
               </>
