@@ -124,3 +124,12 @@ That is why we built **PosChair**.
 - **GitHub Repository**: [https://github.com/brovk2008/Poschair-Hackathon](https://github.com/brovk2008/Poschair-Hackathon)
 - **Live Cloudflare Tunnel Endpoint**: `https://instructors-platforms-biographies-frederick.trycloudflare.com`
 - **1-Click Local Launch**: Run `run.bat` on Windows to launch both the Next.js app and heavy pose server automatically!
+
+---
+
+## ⚖️ License & Intellectual Property
+
+- **Status**: Proprietary / Patent Pending — All Rights Reserved.
+- **Evaluation**: Non-commercial review, evaluation, and hackathon judging permitted under the terms of the project [LICENSE](LICENSE).
+- **Patent Notice**: All kinematic transforms, 3D invariant depth vectors ($\hat{Z}$), and real-time pedagogical voice correction architectures embody proprietary patentable subject matter.
+

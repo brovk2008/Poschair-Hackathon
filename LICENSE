@@ -1,0 +1,66 @@
+PROPRIETARY SOURCE-AVAILABLE LICENSE AND PATENT RESERVATION NOTICE
+Copyright (c) 2026 PosChair Contributors. All Rights Reserved.
+
+================================================================================
+IMPORTANT NOTICE: THIS SOFTWARE IS PROPRIETARY AND SUBJECT TO PENDING AND/OR 
+CONTEMPLATED PATENT APPLICATIONS. NO OPEN-SOURCE OR COMMERCIAL LICENSE IS GRANTED.
+================================================================================
+
+1. RESERVATION OF INTELLECTUAL PROPERTY AND PATENT RIGHTS
+All rights, title, and interest in and to this software, including without limitation
+all source code, object code, algorithms, mathematical models, kinematic transforms,
+3D perspective-invariant depth vector computations (\hat{Z}), multi-camera
+omnidirectional posture tracking mechanisms, two-part pedagogical voice feedback loops,
+audio-visual telemetry interfaces, and related documentation (collectively, the
+"Software"), are the exclusive intellectual property of the authors/licensors
+(the "Rights Holders").
+
+THIS SOFTWARE AND ITS UNDERLYING INVENTIONS EMBODY PATENTABLE SUBJECT MATTER AND/OR
+PATENT PENDING TECHNOLOGIES. NO PATENT LICENSES, RIGHTS, OR IMMUNITIES, WHETHER EXPRESS,
+IMPLIED, BY ESTOPPEL, EXHAUSTION, OR OTHERWISE, ARE CONVEYED, LICENSED, OR TRANSFERRED
+HEREUNDER.
+
+2. LIMITED EVALUATION LICENSE
+The Rights Holders hereby grant to you a personal, non-exclusive, non-transferable,
+non-sublicensable, revocable, limited license to inspect, compile, and execute the
+Software solely for:
+  (a) Non-commercial personal review, testing, and evaluation; or
+  (b) Formal evaluation, benchmarking, and judging in connection with the PosChair
+      Hackathon and designated award review committees.
+
+3. RESTRICTIONS
+You may NOT, directly or indirectly:
+  (a) Use, deploy, reproduce, distribute, display, perform, or exploit the Software or
+      any portion thereof for any commercial, enterprise, government, or revenue-generating
+      purpose without prior written authorization from the Rights Holders;
+  (b) Sublicense, sell, lease, rent, loan, monetize, or otherwise transfer any rights
+      in the Software to any third party;
+  (c) Reverse-engineer, decompile, disassemble, or extract proprietary algorithms,
+      kinematic equations, or neural network pipeline architectures for the purpose of
+      incorporating them into competitive or non-competitive products or services;
+  (d) Incorporate this Software or any derivative work into any project under a license
+      that requires the Software or modifications to be disclosed, shared, or made
+      available under open-source or copyleft terms (e.g., GPL, AGPL, LGPL, MPL, CDDL);
+  (e) File any patent application, utility model, or intellectual property claim claiming
+      priority from or encompassing any method, algorithm, system, or feature disclosed
+      in this Software.
+
+4. DERIVATIVE WORKS AND CONTRIBUTIONS
+Any modifications, enhancements, improvements, or derivative works created from this
+Software shall immediately become the exclusive property of the Rights Holders, or if
+such assignment is legally ineffective, you hereby grant the Rights Holders an exclusive,
+irrevocable, perpetual, worldwide, royalty-free license to use, patent, exploit, and
+license such modifications.
+
+5. TERMINATION
+This limited license shall terminate automatically without notice if you fail to comply
+with any of its terms and conditions. Upon termination, you must cease all use and destroy
+all copies of the Software in your possession.
+
+6. DISCLAIMER OF WARRANTIES
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE RIGHTS HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT,
+OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.

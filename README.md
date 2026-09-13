@@ -720,9 +720,16 @@ This makes it the only posture monitoring system that is **accessible to visuall
 
 ---
 
-## License
+## License & Intellectual Property
 
-MIT — built for the PosChair Hackathon, September 2026.
+**Proprietary / Patent Pending — All Rights Reserved.**
+
+This software, its kinematic models, 3D invariant depth vectors ($\hat{Z}$), two-part pedagogical voice feedback loops, and omnidirectional computer vision algorithms are protected under proprietary intellectual property rights and subject to pending/contemplated patent applications.
+
+- **Hackathon & Reviewer Evaluation**: Non-commercial inspection, compiling, testing, and judging by PosChair hackathon evaluators is permitted under the terms of the [LICENSE](LICENSE).
+- **Commercial Restrictions**: Commercial deployment, reproduction, sublicensing, extraction of proprietary algorithms, or creation of derivative commercial systems is strictly prohibited without prior written authorization from the authors.
+
+See [LICENSE](LICENSE) for full legal terms.
 
 ---
 
